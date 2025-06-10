@@ -1,5 +1,7 @@
 Autonomous Implementation Prompt for Cline
 You are now in autonomous mode. Your task is to fully implement all requirements specified in the SPEC.md file without waiting for further human input.
+SPEC.md already exists, do not create a new one
+
 Instructions:
 
 Read and analyze the complete SPEC.md file thoroughly
@@ -17,6 +19,7 @@ Don't ask for permission or clarification - make informed decisions
 If you encounter blockers, try alternative approaches
 Keep working until ALL requirements are implemented
 Only stop when the specification is fully satisfied
+Do it ALL in ONE TASK, do not start a new task
 
 Output:
 
