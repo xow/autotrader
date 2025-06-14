@@ -10,8 +10,15 @@ from typing import List, Dict, Optional, Tuple
 import pickle
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from collections import deque
-import talib
 import pandas as pd
+
+# Try to import talib, with fallback for manual calculations
+try:
+    import talib
+    TALIB_AVAILABLE = True
+except ImportError:
+    print("TA-Lib not available, using manual calculations")
+    TALIB_AVAILABLE = False
 
 # Configure logging for overnight operation
 logging.basicConfig(
@@ -165,8 +172,44 @@ class ContinuousAutoTrader:
             logger.warning(f"Error converting market data to float: {e}")
             return None
 
+    def manual_sma(self, prices: np.ndarray, period: int) -> float:
+        """Manual Simple Moving Average calculation."""
+        if len(prices) < period:
+            return prices[-1] if len(prices) > 0 else 0
+        return np.mean(prices[-period:])
+
+    def manual_ema(self, prices: np.ndarray, period: int) -> float:
+        """Manual Exponential Moving Average calculation."""
+        if len(prices) < period:
+            return prices[-1] if len(prices) > 0 else 0
+        
+        multiplier = 2 / (period + 1)
+        ema = prices[0]
+        for price in prices[1:]:
+            ema = (price * multiplier) + (ema * (1 - multiplier))
+        return ema
+
+    def manual_rsi(self, prices: np.ndarray, period: int = 14) -> float:
+        """Manual RSI calculation."""
+        if len(prices) < period + 1:
+            return 50  # Neutral RSI
+        
+        deltas = np.diff(prices)
+        gains = np.where(deltas > 0, deltas, 0)
+        losses = np.where(deltas < 0, -deltas, 0)
+        
+        avg_gain = np.mean(gains[-period:])
+        avg_loss = np.mean(losses[-period:])
+        
+        if avg_loss == 0:
+            return 100
+        
+        rs = avg_gain / avg_loss
+        rsi = 100 - (100 / (1 + rs))
+        return rsi
+
     def calculate_technical_indicators(self, prices: np.ndarray, volumes: np.ndarray) -> Dict[str, float]:
-        """Calculate technical indicators using TA-Lib."""
+        """Calculate technical indicators using TA-Lib or manual calculations."""
         if len(prices) < 20:  # Need minimum data for indicators
             return {
                 'sma_5': 0, 'sma_20': 0, 'ema_12': 0, 'ema_26': 0,
@@ -175,27 +218,42 @@ class ContinuousAutoTrader:
             }
         
         try:
-            # Simple and Exponential Moving Averages
-            sma_5 = talib.SMA(prices, timeperiod=5)[-1] if len(prices) >= 5 else prices[-1]
-            sma_20 = talib.SMA(prices, timeperiod=20)[-1] if len(prices) >= 20 else prices[-1]
-            ema_12 = talib.EMA(prices, timeperiod=12)[-1] if len(prices) >= 12 else prices[-1]
-            ema_26 = talib.EMA(prices, timeperiod=26)[-1] if len(prices) >= 26 else prices[-1]
-            
-            # RSI
-            rsi = talib.RSI(prices, timeperiod=14)[-1] if len(prices) >= 14 else 50
-            
-            # MACD
-            macd, macd_signal, _ = talib.MACD(prices)
-            macd_val = macd[-1] if len(macd) > 0 and not np.isnan(macd[-1]) else 0
-            macd_signal_val = macd_signal[-1] if len(macd_signal) > 0 and not np.isnan(macd_signal[-1]) else 0
-            
-            # Bollinger Bands
-            bb_upper, bb_middle, bb_lower = talib.BBANDS(prices)
-            bb_upper_val = bb_upper[-1] if len(bb_upper) > 0 and not np.isnan(bb_upper[-1]) else prices[-1]
-            bb_lower_val = bb_lower[-1] if len(bb_lower) > 0 and not np.isnan(bb_lower[-1]) else prices[-1]
-            
-            # Volume SMA
-            volume_sma = talib.SMA(volumes, timeperiod=10)[-1] if len(volumes) >= 10 else volumes[-1]
+            if TALIB_AVAILABLE:
+                # Use TA-Lib if available
+                sma_5 = talib.SMA(prices, timeperiod=5)[-1] if len(prices) >= 5 else prices[-1]
+                sma_20 = talib.SMA(prices, timeperiod=20)[-1] if len(prices) >= 20 else prices[-1]
+                ema_12 = talib.EMA(prices, timeperiod=12)[-1] if len(prices) >= 12 else prices[-1]
+                ema_26 = talib.EMA(prices, timeperiod=26)[-1] if len(prices) >= 26 else prices[-1]
+                rsi = talib.RSI(prices, timeperiod=14)[-1] if len(prices) >= 14 else 50
+                
+                macd, macd_signal, _ = talib.MACD(prices)
+                macd_val = macd[-1] if len(macd) > 0 and not np.isnan(macd[-1]) else 0
+                macd_signal_val = macd_signal[-1] if len(macd_signal) > 0 and not np.isnan(macd_signal[-1]) else 0
+                
+                bb_upper, bb_middle, bb_lower = talib.BBANDS(prices)
+                bb_upper_val = bb_upper[-1] if len(bb_upper) > 0 and not np.isnan(bb_upper[-1]) else prices[-1]
+                bb_lower_val = bb_lower[-1] if len(bb_lower) > 0 and not np.isnan(bb_lower[-1]) else prices[-1]
+                
+                volume_sma = talib.SMA(volumes, timeperiod=10)[-1] if len(volumes) >= 10 else volumes[-1]
+            else:
+                # Use manual calculations
+                sma_5 = self.manual_sma(prices, 5)
+                sma_20 = self.manual_sma(prices, 20)
+                ema_12 = self.manual_ema(prices, 12)
+                ema_26 = self.manual_ema(prices, 26)
+                rsi = self.manual_rsi(prices, 14)
+                
+                # Simplified MACD
+                macd_val = ema_12 - ema_26
+                macd_signal_val = self.manual_ema(np.array([macd_val]), 9)
+                
+                # Simplified Bollinger Bands
+                bb_middle = sma_20
+                bb_std = np.std(prices[-20:]) if len(prices) >= 20 else 0
+                bb_upper_val = bb_middle + (2 * bb_std)
+                bb_lower_val = bb_middle - (2 * bb_std)
+                
+                volume_sma = self.manual_sma(volumes, 10)
             
             return {
                 'sma_5': float(sma_5),
@@ -599,19 +657,4 @@ class ContinuousAutoTrader:
             except KeyboardInterrupt:
                 logger.info("Received shutdown signal, saving all data...")
                 self.save_training_data()
-                self.save_model()
-                self.save_scalers()
-                self.save_state()
-                logger.info("Shutdown complete")
-                break
-            except Exception as e:
-                logger.error(f"Unexpected error in main loop: {e}")
-                time.sleep(60)  # Wait before retrying
-
-# Main execution
-if __name__ == "__main__":
-    try:
-        trader = ContinuousAutoTrader(initial_balance=10000.0)
-        trader.run_continuous_trading()
-    except Exception as e:
-        logger.error(f"Failed to start trader: {e}")
+                self.save_model
