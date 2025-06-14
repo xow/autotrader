@@ -1,0 +1,1 @@
+https://docs.btcmarkets.net/#section/General-Notes
