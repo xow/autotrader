@@ -1,15 +1,37 @@
-# Pytest test cases for autotrader.py
-from requests.exceptions import RequestException, ConnectTimeoutError
+import unittest
+from unittest.mock import patch
+import autotrader
+import json
 
-def test_fetch_market_data():
-    # Simple test to check if the function can run without raising exceptions, etc.
-    import pytest
+class TestAutotrader(unittest.TestCase):
 
-    try:
-        # In a real test, this would mock the request or have proper imports.
-        data = fetch_market_data()
-        # Assertions: Check that data is not None or valid JSON, etc.
-    except RequestException as e:
-        pytest.fail(f"Failed to fetch market data: {str(e)}")
-    except Exception as e:
-        pytest.fail(f"Unexpected error in fetch_market_data: {str(e)}")
+    @patch('autotrader.requests.get')
+    def test_fetch_market_data_success(self, mock_get):
+        mock_get.return_value.status_code = 200
+        mock_get.return_value.json.return_value = {'markets': [{'instrument': 'BTC'}]}
+        data = autotrader.fetch_market_data()
+        self.assertEqual(data, {'markets': [{'instrument': 'BTC'}]})
+
+    @patch('autotrader.requests.get')
+    def test_fetch_market_data_failure(self, mock_get):
+        mock_get.return_value.status_code = 500
+        with self.assertRaises(Exception):
+            autotrader.fetch_market_data()
+
+
+    def test_predict_optimal_trades_buy(self):
+        data = {'markets': [{'instrument': 'BTC'}, {'instrument': 'ETH'}]}
+        prediction = autotrader.predict_optimal_trades(data)
+        self.assertEqual(prediction, {"signal": "BUY"})
+
+    def test_predict_optimal_trades_sell(self):
+        data = {'markets': [{'instrument': 'BTC'}, {'instrument': 'ETH'}, {'instrument': 'LTC'}, {'instrument': 'XRP'}, {'instrument': 'ADA'}]}
+        prediction = autotrader.predict_optimal_trades(data)
+        self.assertEqual(prediction, {"signal": "SELL"})
+
+    def test_predict_optimal_trades_invalid_input(self):
+        with self.assertRaises(ValueError):
+            autotrader.predict_optimal_trades(None)
+
+if __name__ == '__main__':
+    unittest.main()

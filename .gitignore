@@ -1,0 +1,9 @@
+# This is a suggested .gitignore file for the project
+
+# Any files or directories to ignore should be listed here.
+
+# Common patterns:
+build/
+dist/
+
+# Add specific files or directories as needed.
