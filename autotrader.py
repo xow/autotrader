@@ -6,6 +6,9 @@ import json
 import os
 import time
 
+model_filename = "autotrader_model.keras"
+training_data_filename = "training_data.json"
+
 def fetch_market_data():
     # Function to retrieve live market data from BTCMarkets using v3 API
     base_url = 'https://api.btcmarkets.net/v3'
@@ -93,6 +96,8 @@ def predict_optimal_trades(data, model):
     This is a simplified example and would require proper model training and data preprocessing
     in a real-world scenario.
     """
+    if data is None:
+        raise TypeError("Input data cannot be None")
     if model is None or not isinstance(data, list) or not data:
         return {"signal": "HOLD", "prediction_score": 0.5}  # Default if no data
 
@@ -152,9 +157,11 @@ def simulate_trades(prediction):
 
 # Main entry point
 if __name__ == "__main__":
+    save_interval_seconds = 3600  # Save every hour
+    last_save_time = 0
+
     # Load existing training data and model
-    training_data = load_training_data()
-    model_filename = "autotrader_model.keras"
+    training_data = load_training_data(training_data_filename)
     model = load_model(model_filename)
 
     if model is None:
@@ -165,43 +172,42 @@ if __name__ == "__main__":
         ])
         model.compile(optimizer='adam', loss='binary_crossentropy')
 
-    # Collect new training data
-    new_data = collect_training_data(num_samples=10)
-    training_data.extend(new_data)
+    while True:
+        try:
+            # Collect new training data
+            new_data = collect_training_data(num_samples=10)
+            training_data.extend(new_data)
 
-    # Prepare data for training (very basic example)
-    if training_data:
-        # In a real application, you'd want to do proper feature engineering and labeling
-        # For this example, we'll use the price as the input and a simple up/down label
-        prices = np.array(training_data)
-        # Create labels: 1 if price increased, 0 if decreased or stayed the same
-        labels = np.array([1 if i > 0 and prices[i] > prices[i-1] else 0 for i in range(1, len(prices))])
-        # Prepare inputs
-        inputs = np.array([[price / 50000.0] for price in prices[1:]])  # Scale the prices
-        # Train the model
-        if len(inputs) > 0 and len(labels) > 0:
-            model.fit(inputs, labels, epochs=2, verbose=0)  # Reduced epochs for demonstration
-            print("Model trained.")
-        else:
-            print("Not enough data to train the model.")
-    else:
-        print("No training data available.")
+            # Prepare data for training (very basic example)
+            if training_data:
+                prices = np.array(training_data)
+                labels = np.array([1 if i > 0 and prices[i] > prices[i-1] else 0 for i in range(1, len(prices))])
+                inputs = np.array([[price / 50000.0] for price in prices[1:]])  # Scale the prices
+                if len(inputs) > 0 and len(labels) > 0:
+                    model.fit(inputs, labels, epochs=2, verbose=0)  # Reduced epochs for demonstration
+                    print("Model trained.")
+                else:
+                    print("Not enough data to train the model.")
+            else:
+                print("No training data available.")
 
-    # Save the training data
-    save_training_data(training_data)
+            # Fetch market data for prediction
+            market_data = fetch_market_data()
+            if model:
+                trade_prediction = predict_optimal_trades(market_data, model)
+                simulate_trades(trade_prediction)
+            else:
+                print("Model not loaded or created. Cannot make predictions.")
 
-    # Fetch market data for prediction
-    try:
-        market_data = fetch_market_data()
-        # If data fetched successfully, run the simulation
-        if model:
-            trade_prediction = predict_optimal_trades(market_data, model)
-            simulate_trades(trade_prediction)
-        else:
-            print("Model not loaded or created. Cannot make predictions.")
-    except Exception as e:
-        print(f"Error during autotrader execution: {str(e)}")
+            # Save model and training data at regular intervals
+            current_time = time.time()
+            if current_time - last_save_time >= save_interval_seconds:
+                save_training_data(training_data, training_data_filename)
+                save_model(model, model_filename)
+                last_save_time = current_time
 
-    # Save the model
-    if model:
-        save_model(model, model_filename)
+            time.sleep(60)  # Wait for 60 seconds before the next iteration
+
+        except Exception as e:
+            print(f"An error occurred: {str(e)}")
+            time.sleep(60)  # Wait before retrying
