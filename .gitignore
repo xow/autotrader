@@ -17,3 +17,4 @@ venv/
 env/
 /.pytest_cache
 autotrader_model.keras
+training_data.json
