@@ -12,6 +12,8 @@ Document progress - update README.md with implementation status
 Handle errors independently - debug and fix issues without asking
 Make reasonable assumptions when specs are ambiguous
 Prioritize core functionality first, then optional features
+Before finishing a task run unit tests, them pass
+After finishing a task, commit with a descriptive commit message
 
 Autonomous Behavior:
 
