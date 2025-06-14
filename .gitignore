@@ -18,3 +18,4 @@ env/
 /.pytest_cache
 autotrader_model.keras
 training_data.json
+trader_state.pkl
