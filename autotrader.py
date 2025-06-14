@@ -5,230 +5,396 @@ import numpy as np
 import json
 import os
 import time
+import logging
+from typing import List, Dict, Optional
+import pickle
 
-model_filename = "autotrader_model.keras"
-training_data_filename = "training_data.json"
+# Configure logging for overnight operation
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('autotrader.log'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
 
-def fetch_market_data():
-    # Function to retrieve live market data from BTCMarkets using v3 API
-    base_url = 'https://api.btcmarkets.net/v3'
-    endpoint = '/markets/tickers?marketId=BTC-AUD' # Using a specific market for demonstration
-    url = f"{base_url}{endpoint}"
-    try:
-        response = requests.get(url)
-        response.raise_for_status() # Raise an exception for HTTP errors (4xx or 5xx)
-        data = response.json()
-        return data
-    except requests.exceptions.RequestException as e:
-        raise Exception(f"Failed to fetch market data from {url}: {str(e)}")
+class ContinuousAutoTrader:
+    def __init__(self, initial_balance: float = 10000.0):
+        self.balance = initial_balance
+        self.model_filename = "autotrader_model.keras"
+        self.training_data_filename = "training_data.json"
+        self.state_filename = "trader_state.pkl"
+        self.save_interval_seconds = 1800  # Save every 30 minutes for more frequent backups
+        self.training_interval_seconds = 300  # Retrain every 5 minutes
+        self.max_training_samples = 1000  # Limit training data to prevent memory issues
+        
+        # Load persistent state
+        self.load_state()
+        
+        # Initialize model
+        self.model = self.load_model()
+        if self.model is None:
+            self.model = self.create_new_model()
+        
+        # Training data management
+        self.training_data = self.load_training_data()
+        self.last_save_time = time.time()
+        self.last_training_time = 0
+        
+        logger.info(f"AutoTrader initialized with balance: {self.balance:.2f} AUD")
+        logger.info(f"Loaded {len(self.training_data)} historical data points")
 
-def collect_training_data(num_samples=10):
-    """Collects market data and prepares it for training."""
-    training_data = []
-    for _ in range(num_samples):
+    def save_state(self):
+        """Save the current state of the trader to a file."""
+        state = {
+            'balance': self.balance,
+            'last_save_time': self.last_save_time,
+            'last_training_time': self.last_training_time,
+            'training_data_length': len(self.training_data)
+        }
         try:
-            data = fetch_market_data()
-            if isinstance(data, list) and data:
-                btc_aud_data = next((item for item in data if item.get('marketId') == 'BTC-AUD'), None)
-                if btc_aud_data and 'lastPrice' in btc_aud_data:
-                    try:
-                        price = float(btc_aud_data['lastPrice'])
-                        # In a real scenario, you'd also collect other features and labels
-                        training_data.append(price)
-                    except ValueError:
-                        print("Warning: Could not convert 'lastPrice' to float.")
-                else:
-                    print("Warning: 'BTC-AUD' market data or 'lastPrice' not found in the response.")
-            else:
-                print("Warning: Invalid market data format.")
+            with open(self.state_filename, 'wb') as f:
+                pickle.dump(state, f)
+            logger.info("Trader state saved successfully")
         except Exception as e:
-            print(f"Error collecting data: {e}")
-        time.sleep(1)  # Wait a second to avoid rate limiting
-    return training_data
+            logger.error(f"Error saving trader state: {e}")
 
-def save_training_data(data, filename="training_data.json"):
-    """Saves training data to a JSON file."""
-    try:
-        with open(filename, "w") as f:
-            json.dump(data, f)
-        print(f"Training data saved to {filename}")
-    except Exception as e:
-        print(f"Error saving training data: {e}")
+    def load_state(self):
+        """Load the previous state of the trader."""
+        try:
+            with open(self.state_filename, 'rb') as f:
+                state = pickle.load(f)
+            self.balance = state.get('balance', 10000.0)
+            self.last_save_time = state.get('last_save_time', 0)
+            self.last_training_time = state.get('last_training_time', 0)
+            logger.info(f"Trader state loaded. Balance: {self.balance:.2f} AUD")
+        except FileNotFoundError:
+            logger.info("No previous state found. Starting fresh.")
+        except Exception as e:
+            logger.error(f"Error loading trader state: {e}")
 
-def load_training_data(filename="training_data.json"):
-    """Loads training data from a JSON file."""
-    try:
-        with open(filename, "r") as f:
-            data = json.load(f)
-        print(f"Training data loaded from {filename}")
-        return data
-    except FileNotFoundError:
-        print(f"No training data file found at {filename}. Starting with an empty dataset.")
-        return []
-    except Exception as e:
-        print(f"Error loading training data: {e}")
-        return []
+    def fetch_market_data(self) -> Optional[List[Dict]]:
+        """Fetch live market data with better error handling."""
+        base_url = 'https://api.btcmarkets.net/v3'
+        endpoint = '/markets/tickers?marketId=BTC-AUD'
+        url = f"{base_url}{endpoint}"
+        
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                response = requests.get(url, timeout=10)
+                response.raise_for_status()
+                data = response.json()
+                logger.debug("Market data fetched successfully")
+                return data
+            except requests.exceptions.RequestException as e:
+                logger.warning(f"Attempt {attempt + 1}/{max_retries} failed: {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(2 ** attempt)  # Exponential backoff
+                else:
+                    logger.error(f"Failed to fetch market data after {max_retries} attempts")
+                    return None
 
-def save_model(model, filename="autotrader_model.keras"):
-    """Saves the TensorFlow model to a file."""
-    try:
-        model.save(filename)
-        print(f"Model saved to {filename}")
-    except Exception as e:
-        print(f"Error saving model: {e}")
-
-def load_model(filename="autotrader_model.keras"):
-    """Loads the TensorFlow model from a file."""
-    try:
-        model = tf.keras.models.load_model(filename)
-        print(f"Loaded model from {filename}")
-        return model
-    except FileNotFoundError:
-        print(f"No model file found at {filename}. Creating a new model.")
-        return None  # Indicate that the model needs to be created
-    except Exception as e:
-        print(f"Error loading model: {e}. Creating a new model.")
+    def extract_price_from_data(self, data: List[Dict]) -> Optional[float]:
+        """Extract BTC-AUD price from market data."""
+        if not data or not isinstance(data, list):
+            return None
+        
+        btc_aud_data = next((item for item in data if item.get('marketId') == 'BTC-AUD'), None)
+        if btc_aud_data and 'lastPrice' in btc_aud_data:
+            try:
+                return float(btc_aud_data['lastPrice'])
+            except (ValueError, TypeError):
+                logger.warning("Could not convert 'lastPrice' to float")
         return None
 
-def predict_optimal_trades(data, model):
-    """
-    Implement a placeholder machine learning algorithm using TensorFlow to predict optimal trades.
-    This is a simplified example and would require proper model training and data preprocessing
-    in a real-world scenario.
-    """
-    if data is None:
-        raise TypeError("Input data cannot be None")
-    if model is None or not isinstance(data, list) or not data:
-        return {"signal": "HOLD", "prediction_score": 0.5}  # Default if no data
-
-    # Extract a numerical feature from the market data for prediction
-    # For this example, we expect a list of market objects and will try to find BTC-AUD
-    input_feature = 0.0
-    btc_aud_data = None
-    for market_info in data:
-        if market_info.get('marketId') == 'BTC-AUD':
-            btc_aud_data = market_info
-            break
-
-    if btc_aud_data and 'lastPrice' in btc_aud_data:
+    def collect_and_store_data(self):
+        """Collect current market data and add to training dataset."""
         try:
-            input_feature = float(btc_aud_data['lastPrice'])
-        except ValueError:
-            print("Warning: Could not convert 'lastPrice' to float.")
-            input_feature = 0.0
-    else:
-        print("Warning: 'BTC-AUD' market data or 'lastPrice' not found in the response.")
-        # Fallback if specific market data isn't found, or handle as an error
-        # For now, we'll proceed with 0.0, but a real app might raise an error or log more.
+            market_data = self.fetch_market_data()
+            if market_data:
+                price = self.extract_price_from_data(market_data)
+                if price:
+                    # Store data point with timestamp
+                    data_point = {
+                        'timestamp': datetime.now().isoformat(),
+                        'price': price,
+                        'volume': market_data[0].get('volume24h', 0) if market_data else 0
+                    }
+                    self.training_data.append(data_point)
+                    
+                    # Limit training data size to prevent memory issues
+                    if len(self.training_data) > self.max_training_samples:
+                        self.training_data = self.training_data[-self.max_training_samples:]
+                    
+                    logger.debug(f"Data collected: Price {price:.2f} AUD")
+                    return True
+        except Exception as e:
+            logger.error(f"Error collecting data: {e}")
+        return False
 
-    # Normalize or scale the input feature if necessary for the model
-    # For this dummy model, a simple scaling. Adjust based on expected price range.
-    scaled_input = np.array([[input_feature / 50000.0]])  # Example scaling, assuming max price around 50000
-
-    # Make a prediction
-    try:
-        prediction_raw = model.predict(scaled_input, verbose=0)[0][0]
-    except Exception as e:
-        print(f"Error during prediction: {e}")
-        return {"signal": "HOLD", "prediction_score": 0.5}  # Default if prediction fails
-
-    # Convert prediction to a trading signal
-    if prediction_raw > 0.5:
-        signal = "BUY"
-    elif prediction_raw < 0.5:
-        signal = "SELL"
-    else:
-        signal = "HOLD"
-
-    print(f"Prediction raw: {prediction_raw}")
-    return {"signal": signal, "prediction_score": float(prediction_raw)}
-
-def simulate_trades(prediction):
-    """
-    Function to perform simulated trades based on predictions.
-    Should include logic for handling trade execution without real market impact.
-    """
-    global balance  # Access the global balance variable
-    num_coins = 0.01  # Fixed trade amount (e.g., 0.01 BTC)
-    transaction_fee_rate = 0.001  # 0.1% transaction fee
-
-    try:
-        market_data = fetch_market_data()
-        print(market_data)
-        if market_data and isinstance(market_data, list) and len(market_data) > 0 and 'lastPrice' in market_data[0]:
-            price = float(market_data[0]['lastPrice'])
-        else:
-            print("Warning: Could not fetch price. No trade action taken.")
-            return
-    except Exception as e:
-        print(f"Error fetching market data in simulate_trades: {e}")
-        print("Warning: Could not fetch price. No trade action taken.")
-        return
-
-    if prediction["signal"] == "BUY":
-        cost = price * num_coins * (1 + transaction_fee_rate)
-        balance -= cost
-        print(f"Simulation: Buy order executed at {price:.2f} AUD for {num_coins} BTC. Cost: {cost:.2f} AUD")
-    elif prediction["signal"] == "SELL":
-        revenue = price * num_coins * (1 - transaction_fee_rate)
-        balance += revenue
-        print(f"Simulation: Sell order executed at {price:.2f} AUD for {num_coins} BTC. Revenue: {revenue:.2f} AUD")
-    else:
-        print("No trade action taken")
-    print(f"Current balance: {balance:.2f} AUD")
-
-# Main entry point
-if __name__ == "__main__":
-    balance = 10000.0  # Initial balance
-    save_interval_seconds = 3600  # Save every hour
-    last_save_time = 0
-
-    # Load existing training data and model
-    training_data = load_training_data(training_data_filename)
-    model = load_model(model_filename)
-
-    if model is None:
-        print(f"Creating a new model.")
+    def create_new_model(self):
+        """Create a new neural network model."""
         model = tf.keras.Sequential([
-            tf.keras.layers.Dense(10, activation='relu', input_shape=(1,)),
+            tf.keras.layers.Dense(20, activation='relu', input_shape=(3,)),  # More inputs: price, volume, time
+            tf.keras.layers.Dropout(0.2),
+            tf.keras.layers.Dense(10, activation='relu'),
+            tf.keras.layers.Dropout(0.2),
             tf.keras.layers.Dense(1, activation='sigmoid')
         ])
-        model.compile(optimizer='adam', loss='binary_crossentropy')
+        model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+        logger.info("New model created")
+        return model
 
-    while True:
+    def prepare_training_data(self):
+        """Prepare training data with features and labels."""
+        if len(self.training_data) < 10:
+            return None, None
+        
         try:
-            # Collect new training data
-            new_data = collect_training_data(num_samples=10)
-            training_data.extend(new_data)
-
-            # Prepare data for training (very basic example)
-            if training_data:
-                prices = np.array(training_data)
-                labels = np.array([1 if i > 0 and prices[i] > prices[i-1] else 0 for i in range(1, len(prices))])
-                inputs = np.array([[price / 50000.0] for price in prices[1:]])  # Scale the prices
-                if len(inputs) > 0 and len(labels) > 0:
-                    history = model.fit(inputs, labels, epochs=2, verbose=0)  # Reduced epochs for demonstration
-                    print(f"Model trained. Loss: {history.history['loss'][-1]}")
-                else:
-                    print("Not enough data to train the model.")
-
-            # Fetch market data for prediction
-            market_data = fetch_market_data()
-            if model:
-                trade_prediction = predict_optimal_trades(market_data, model)
-                simulate_trades(trade_prediction)
-            else:
-                print("Model not loaded or created. Cannot make predictions.")
-
-            # Save model and training data at regular intervals
-            current_time = time.time()
-            if current_time - last_save_time >= save_interval_seconds:
-                save_training_data(training_data, training_data_filename)
-                save_model(model, model_filename)
-                last_save_time = current_time
-
-            time.sleep(60)  # Wait for 60 seconds before the next iteration
-
+            # Extract features and create labels
+            features = []
+            labels = []
+            
+            for i in range(5, len(self.training_data)):  # Need at least 5 previous points
+                current_price = self.training_data[i]['price']
+                prev_prices = [self.training_data[j]['price'] for j in range(i-5, i)]
+                volume = self.training_data[i].get('volume', 0)
+                
+                # Features: average of last 5 prices, current volume, price trend
+                avg_price = np.mean(prev_prices)
+                price_trend = (current_price - prev_prices[0]) / prev_prices[0] if prev_prices[0] > 0 else 0
+                
+                features.append([
+                    current_price / 100000.0,  # Normalized price
+                    volume / 1000000.0,        # Normalized volume
+                    price_trend                # Price trend
+                ])
+                
+                # Label: 1 if price goes up in next period, 0 otherwise
+                if i < len(self.training_data) - 1:
+                    next_price = self.training_data[i + 1]['price']
+                    labels.append(1 if next_price > current_price else 0)
+            
+            return np.array(features), np.array(labels)
         except Exception as e:
-            print(f"An error occurred: {str(e)}")
-            time.sleep(60)  # Wait before retrying
+            logger.error(f"Error preparing training data: {e}")
+            return None, None
+
+    def train_model(self):
+        """Train the model with accumulated data."""
+        try:
+            features, labels = self.prepare_training_data()
+            if features is None or len(features) < 10:
+                logger.warning("Not enough data for training")
+                return False
+            
+            # Train the model
+            history = self.model.fit(
+                features, labels,
+                epochs=5,
+                batch_size=32,
+                validation_split=0.2,
+                verbose=0
+            )
+            
+            loss = history.history['loss'][-1]
+            accuracy = history.history.get('accuracy', [0])[-1]
+            logger.info(f"Model trained - Loss: {loss:.4f}, Accuracy: {accuracy:.4f}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error training model: {e}")
+            return False
+
+    def predict_trade_signal(self, market_data: List[Dict]) -> Dict:
+        """Predict trading signal based on current market data."""
+        try:
+            price = self.extract_price_from_data(market_data)
+            if not price or len(self.training_data) < 5:
+                return {"signal": "HOLD", "confidence": 0.5, "price": price or 0}
+            
+            # Prepare input features similar to training
+            recent_prices = [dp['price'] for dp in self.training_data[-5:]]
+            volume = market_data[0].get('volume24h', 0) if market_data else 0
+            
+            avg_price = np.mean(recent_prices)
+            price_trend = (price - recent_prices[0]) / recent_prices[0] if recent_prices[0] > 0 else 0
+            
+            input_features = np.array([[
+                price / 100000.0,
+                volume / 1000000.0,
+                price_trend
+            ]])
+            
+            # Make prediction
+            prediction = self.model.predict(input_features, verbose=0)[0][0]
+            
+            # Convert to trading signal
+            if prediction > 0.6:
+                signal = "BUY"
+            elif prediction < 0.4:
+                signal = "SELL"
+            else:
+                signal = "HOLD"
+            
+            return {
+                "signal": signal,
+                "confidence": float(prediction),
+                "price": price
+            }
+            
+        except Exception as e:
+            logger.error(f"Error making prediction: {e}")
+            return {"signal": "HOLD", "confidence": 0.5, "price": 0}
+
+    def execute_simulated_trade(self, prediction: Dict):
+        """Execute simulated trades based on predictions."""
+        if not prediction or prediction["price"] == 0:
+            logger.warning("Invalid prediction data, no trade executed")
+            return
+        
+        trade_amount = 0.01  # BTC
+        fee_rate = 0.001  # 0.1%
+        price = prediction["price"]
+        signal = prediction["signal"]
+        confidence = prediction["confidence"]
+        
+        # Only trade if confidence is high enough
+        if abs(confidence - 0.5) < 0.1:  # Too uncertain
+            logger.info(f"Confidence too low ({confidence:.3f}), holding position")
+            return
+        
+        try:
+            if signal == "BUY" and self.balance > price * trade_amount * (1 + fee_rate):
+                cost = price * trade_amount * (1 + fee_rate)
+                self.balance -= cost
+                logger.info(f"BUY executed: {trade_amount} BTC at {price:.2f} AUD (Cost: {cost:.2f}, Confidence: {confidence:.3f})")
+            
+            elif signal == "SELL":
+                revenue = price * trade_amount * (1 - fee_rate)
+                self.balance += revenue
+                logger.info(f"SELL executed: {trade_amount} BTC at {price:.2f} AUD (Revenue: {revenue:.2f}, Confidence: {confidence:.3f})")
+            
+            else:
+                logger.info(f"HOLD - Price: {price:.2f} AUD, Confidence: {confidence:.3f}")
+            
+            logger.info(f"Current balance: {self.balance:.2f} AUD")
+            
+        except Exception as e:
+            logger.error(f"Error executing trade: {e}")
+
+    def save_training_data(self):
+        """Save training data to JSON file."""
+        try:
+            with open(self.training_data_filename, "w") as f:
+                json.dump(self.training_data, f, indent=2)
+            logger.info(f"Training data saved ({len(self.training_data)} samples)")
+        except Exception as e:
+            logger.error(f"Error saving training data: {e}")
+
+    def load_training_data(self) -> List[Dict]:
+        """Load training data from JSON file."""
+        try:
+            with open(self.training_data_filename, "r") as f:
+                data = json.load(f)
+            logger.info(f"Training data loaded ({len(data)} samples)")
+            return data
+        except FileNotFoundError:
+            logger.info("No training data file found, starting fresh")
+            return []
+        except Exception as e:
+            logger.error(f"Error loading training data: {e}")
+            return []
+
+    def save_model(self):
+        """Save the TensorFlow model."""
+        try:
+            self.model.save(self.model_filename)
+            logger.info("Model saved successfully")
+        except Exception as e:
+            logger.error(f"Error saving model: {e}")
+
+    def load_model(self):
+        """Load the TensorFlow model."""
+        try:
+            model = tf.keras.models.load_model(self.model_filename)
+            logger.info("Model loaded successfully")
+            return model
+        except FileNotFoundError:
+            logger.info("No model file found, will create new one")
+            return None
+        except Exception as e:
+            logger.error(f"Error loading model: {e}")
+            return None
+
+    def should_save(self) -> bool:
+        """Check if it's time to save data and model."""
+        return time.time() - self.last_save_time >= self.save_interval_seconds
+
+    def should_train(self) -> bool:
+        """Check if it's time to retrain the model."""
+        return time.time() - self.last_training_time >= self.training_interval_seconds
+
+    def run_continuous_trading(self):
+        """Main loop for continuous trading operation."""
+        logger.info("Starting continuous trading operation...")
+        
+        iteration_count = 0
+        while True:
+            try:
+                iteration_count += 1
+                logger.info(f"--- Iteration {iteration_count} ---")
+                
+                # Collect new market data
+                if self.collect_and_store_data():
+                    # Get current market data for prediction
+                    current_market_data = self.fetch_market_data()
+                    if current_market_data:
+                        # Make trading prediction
+                        prediction = self.predict_trade_signal(current_market_data)
+                        
+                        # Execute trade based on prediction
+                        self.execute_simulated_trade(prediction)
+                
+                # Retrain model if enough time has passed
+                if self.should_train() and len(self.training_data) >= 10:
+                    logger.info("Retraining model with new data...")
+                    if self.train_model():
+                        self.last_training_time = time.time()
+                
+                # Save everything periodically
+                if self.should_save():
+                    logger.info("Saving data and model...")
+                    self.save_training_data()
+                    self.save_model()
+                    self.save_state()
+                    self.last_save_time = time.time()
+                
+                # Log status every 10 iterations
+                if iteration_count % 10 == 0:
+                    logger.info(f"Status: Balance={self.balance:.2f} AUD, Training samples={len(self.training_data)}")
+                
+                # Sleep before next iteration
+                time.sleep(60)  # 1 minute intervals
+                
+            except KeyboardInterrupt:
+                logger.info("Received shutdown signal, saving data...")
+                self.save_training_data()
+                self.save_model()
+                self.save_state()
+                logger.info("Shutdown complete")
+                break
+            except Exception as e:
+                logger.error(f"Unexpected error in main loop: {e}")
+                time.sleep(60)  # Wait before retrying
+
+# Main execution
+if __name__ == "__main__":
+    try:
+        trader = ContinuousAutoTrader(initial_balance=10000.0)
+        trader.run_continuous_trading()
+    except Exception as e:
+        logger.error(f"Failed to start trader: {e}")
