@@ -6,4 +6,14 @@
 build/
 dist/
 
-# Add specific files or directories as needed.
+*.keras
+__pycache__/
+*.pyc
+*.log
+*.swp
+.DS_Store
+*.egg-info
+venv/
+env/
+/.pytest_cache
+autotrader_model.keras
