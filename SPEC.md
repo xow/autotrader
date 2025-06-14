@@ -50,6 +50,33 @@ The bot will implement a robust data persistence system that includes:
 
 The bot will simulate trades based on the predicted outcomes of the machine learning algorithm. This will allow users to test and evaluate the performance of the bot without executing actual trades.
 
+### Trade Execution Logging
+
+The simulation module will provide real-time feedback on trading decisions by:
+
+* **Buy Order Notifications**: When the ML model predicts a favorable buy opportunity, the bot will print detailed information including:
+  - Timestamp of the decision
+  - Cryptocurrency pair (e.g., BTC/AUD)
+  - Predicted buy price
+  - Simulated order quantity
+  - Total simulated investment value
+  - Confidence score of the ML prediction
+
+* **Sell Order Notifications**: When the ML model predicts an optimal sell point, the bot will print:
+  - Timestamp of the decision
+  - Cryptocurrency pair
+  - Predicted sell price
+  - Simulated order quantity
+  - Total simulated sale value
+  - Profit/loss calculation from the corresponding buy order
+  - Confidence score of the ML prediction
+
+* **Portfolio Updates**: After each simulated trade, the bot will display:
+  - Current simulated portfolio balance
+  - Total profit/loss since training began
+  - Number of successful vs unsuccessful trades
+  - Current holdings breakdown
+
 ## Implementation Details
 
 - The bot will be built using Python with TensorFlow for the neural network implementation.

@@ -14,6 +14,7 @@ Make reasonable assumptions when specs are ambiguous
 Prioritize core functionality first, then optional features
 Before finishing a task run unit tests, them pass
 After finishing a task, commit with a descriptive commit message
+Keep SPEC.md updated with the latest changes
 
 Autonomous Behavior:
 
