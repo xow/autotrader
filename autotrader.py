@@ -148,16 +148,38 @@ def simulate_trades(prediction):
     Function to perform simulated trades based on predictions.
     Should include logic for handling trade execution without real market impact.
     """
-    # Basic simulation example - format as needed by task
+    global balance  # Access the global balance variable
+    num_coins = 0.01  # Fixed trade amount (e.g., 0.01 BTC)
+    transaction_fee_rate = 0.001  # 0.1% transaction fee
+
+    try:
+        market_data = fetch_market_data()
+        print(market_data)
+        if market_data and isinstance(market_data, list) and len(market_data) > 0 and 'lastPrice' in market_data[0]:
+            price = float(market_data[0]['lastPrice'])
+        else:
+            print("Warning: Could not fetch price. No trade action taken.")
+            return
+    except Exception as e:
+        print(f"Error fetching market data in simulate_trades: {e}")
+        print("Warning: Could not fetch price. No trade action taken.")
+        return
+
     if prediction["signal"] == "BUY":
-        print("Simulation: Buy order executed")
+        cost = price * num_coins * (1 + transaction_fee_rate)
+        balance -= cost
+        print(f"Simulation: Buy order executed at {price:.2f} AUD for {num_coins} BTC. Cost: {cost:.2f} AUD")
     elif prediction["signal"] == "SELL":
-        print("Simulation: Sell order executed")
+        revenue = price * num_coins * (1 - transaction_fee_rate)
+        balance += revenue
+        print(f"Simulation: Sell order executed at {price:.2f} AUD for {num_coins} BTC. Revenue: {revenue:.2f} AUD")
     else:
         print("No trade action taken")
+    print(f"Current balance: {balance:.2f} AUD")
 
 # Main entry point
 if __name__ == "__main__":
+    balance = 10000.0  # Initial balance
     save_interval_seconds = 3600  # Save every hour
     last_save_time = 0
 
