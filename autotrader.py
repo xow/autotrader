@@ -32,7 +32,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 class ContinuousAutoTrader:
-    def __init__(self, initial_balance: float = 10000.0):
+    def __init__(self, initial_balance: float = 10000.0, test_mode: bool = False, test_iterations: int = 5):
         self.balance = initial_balance
         self.model_filename = "autotrader_model.keras"
         self.training_data_filename = "training_data.json"
@@ -42,6 +42,10 @@ class ContinuousAutoTrader:
         self.training_interval_seconds = 600  # Retrain every 10 minutes
         self.max_training_samples = 2000  # Increased for more data
         self.sequence_length = 20  # Number of time steps for LSTM
+        
+        # Test mode settings
+        self.test_mode = test_mode
+        self.test_iterations = test_iterations
         
         # Initialize scalers for adaptive normalization
         self.feature_scaler = StandardScaler()
@@ -285,9 +289,16 @@ class ContinuousAutoTrader:
                     # Calculate technical indicators if we have enough historical data
                     indicators = {}
                     if len(self.training_data) >= 20:
-                        recent_prices = np.array([dp['price'] for dp in self.training_data[-20:]])
-                        recent_volumes = np.array([dp['volume'] for dp in self.training_data[-20:]])
-                        indicators = self.calculate_technical_indicators(recent_prices, recent_volumes)
+                        try:
+                            # Filter only valid dictionary entries and extract prices/volumes
+                            valid_data = [dp for dp in self.training_data[-20:] if isinstance(dp, dict) and 'price' in dp and 'volume' in dp]
+                            if len(valid_data) >= 20:
+                                recent_prices = np.array([dp['price'] for dp in valid_data])
+                                recent_volumes = np.array([dp['volume'] for dp in valid_data])
+                                indicators = self.calculate_technical_indicators(recent_prices, recent_volumes)
+                        except Exception as e:
+                            logger.warning(f"Error calculating technical indicators: {e}")
+                            indicators = {}
                     
                     # Store comprehensive data point with timestamp
                     data_point = {
@@ -355,8 +366,11 @@ class ContinuousAutoTrader:
 
     def fit_scalers(self, training_data: List[Dict]):
         """Fit scalers to the training data."""
-        if len(training_data) < 50:
-            logger.warning("Not enough data to fit scalers properly")
+        # Filter only valid dictionary entries
+        valid_data = [dp for dp in training_data if isinstance(dp, dict) and 'price' in dp]
+        
+        if len(valid_data) < 50:
+            logger.warning(f"Not enough valid data to fit scalers properly ({len(valid_data)} valid entries)")
             return False
         
         try:
@@ -364,7 +378,7 @@ class ContinuousAutoTrader:
             features = []
             prices = []
             
-            for data_point in training_data:
+            for data_point in valid_data:
                 feature_vector = self.prepare_features(data_point)
                 features.append(feature_vector)
                 prices.append([data_point.get('price', 0)])
@@ -377,7 +391,7 @@ class ContinuousAutoTrader:
             self.price_scaler.fit(prices)
             self.scalers_fitted = True
             
-            logger.info("Scalers fitted to training data")
+            logger.info(f"Scalers fitted to {len(valid_data)} training data points")
             return True
             
         except Exception as e:
@@ -386,13 +400,17 @@ class ContinuousAutoTrader:
 
     def prepare_lstm_training_data(self) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
         """Prepare sequential training data for LSTM with proper future prediction labeling."""
-        if len(self.training_data) < self.sequence_length + 10:
+        # Filter only valid dictionary entries
+        valid_data = [dp for dp in self.training_data if isinstance(dp, dict) and 'price' in dp]
+        
+        if len(valid_data) < self.sequence_length + 10:
+            logger.warning(f"Not enough valid data for LSTM training ({len(valid_data)} valid entries)")
             return None, None
         
         try:
             # Fit scalers if not already fitted
             if not self.scalers_fitted:
-                if not self.fit_scalers(self.training_data):
+                if not self.fit_scalers(valid_data):
                     return None, None
             
             # Prepare sequences and labels
@@ -400,11 +418,11 @@ class ContinuousAutoTrader:
             labels = []
             
             # Create sequences with proper future prediction labels
-            for i in range(len(self.training_data) - self.sequence_length - 1):  # -1 for future label
+            for i in range(len(valid_data) - self.sequence_length - 1):  # -1 for future label
                 # Create sequence of features
                 sequence_features = []
                 for j in range(i, i + self.sequence_length):
-                    feature_vector = self.prepare_features(self.training_data[j])
+                    feature_vector = self.prepare_features(valid_data[j])
                     sequence_features.append(feature_vector)
                 
                 # Scale the sequence
@@ -413,8 +431,8 @@ class ContinuousAutoTrader:
                 sequences.append(scaled_sequence)
                 
                 # Create label: will the price go up in the NEXT period?
-                current_price = self.training_data[i + self.sequence_length]['price']
-                future_price = self.training_data[i + self.sequence_length + 1]['price']
+                current_price = valid_data[i + self.sequence_length]['price']
+                future_price = valid_data[i + self.sequence_length + 1]['price']
                 label = 1 if future_price > current_price else 0
                 labels.append(label)
             
@@ -611,7 +629,10 @@ class ContinuousAutoTrader:
 
     def run_continuous_trading(self):
         """Main loop for continuous LSTM-based trading operation."""
-        logger.info("Starting continuous LSTM trading operation...")
+        if self.test_mode:
+            logger.info(f"Starting test mode with {self.test_iterations} iterations...")
+        else:
+            logger.info("Starting continuous LSTM trading operation...")
         
         iteration_count = 0
         while True:
@@ -651,8 +672,20 @@ class ContinuousAutoTrader:
                     avg_rsi = np.mean([dp.get('rsi', 50) for dp in self.training_data[-10:] if 'rsi' in dp]) if len(self.training_data) >= 10 else 50
                     logger.info(f"Status: Balance={self.balance:.2f} AUD, Training samples={len(self.training_data)}, Avg RSI={avg_rsi:.1f}")
                 
+                # Check if we should exit in test mode
+                if self.test_mode and iteration_count >= self.test_iterations:
+                    logger.info(f"Test mode complete after {iteration_count} iterations")
+                    # Force save before exiting
+                    logger.info("Saving data before exit...")
+                    self.save_training_data()
+                    self.save_model()
+                    self.save_scalers()
+                    self.save_state()
+                    break
+                
                 # Sleep before next iteration
-                time.sleep(60)  # 1 minute intervals
+                sleep_time = 5 if self.test_mode else 60  # Shorter sleep in test mode
+                time.sleep(sleep_time)
                 
             except KeyboardInterrupt:
                 logger.info("Received shutdown signal, saving all data...")
@@ -668,5 +701,7 @@ class ContinuousAutoTrader:
 
 
 if __name__ == "__main__":
-    trader = ContinuousAutoTrader()
+    import sys
+    test_mode = '--test' in sys.argv
+    trader = ContinuousAutoTrader(test_mode=test_mode)
     trader.run_continuous_trading()
