@@ -2,6 +2,9 @@ import requests
 from datetime import datetime
 import tensorflow as tf
 import numpy as np
+import json
+import os
+import time
 
 def fetch_market_data():
     # Function to retrieve live market data from BTCMarkets using v3 API
@@ -16,22 +19,82 @@ def fetch_market_data():
     except requests.exceptions.RequestException as e:
         raise Exception(f"Failed to fetch market data from {url}: {str(e)}")
 
-def predict_optimal_trades(data):
+def collect_training_data(num_samples=10):
+    """Collects market data and prepares it for training."""
+    training_data = []
+    for _ in range(num_samples):
+        try:
+            data = fetch_market_data()
+            if isinstance(data, list) and data:
+                btc_aud_data = next((item for item in data if item.get('marketId') == 'BTC-AUD'), None)
+                if btc_aud_data and 'lastPrice' in btc_aud_data:
+                    try:
+                        price = float(btc_aud_data['lastPrice'])
+                        # In a real scenario, you'd also collect other features and labels
+                        training_data.append(price)
+                    except ValueError:
+                        print("Warning: Could not convert 'lastPrice' to float.")
+                else:
+                    print("Warning: 'BTC-AUD' market data or 'lastPrice' not found in the response.")
+            else:
+                print("Warning: Invalid market data format.")
+        except Exception as e:
+            print(f"Error collecting data: {e}")
+        time.sleep(1)  # Wait a second to avoid rate limiting
+    return training_data
+
+def save_training_data(data, filename="training_data.json"):
+    """Saves training data to a JSON file."""
+    try:
+        with open(filename, "w") as f:
+            json.dump(data, f)
+        print(f"Training data saved to {filename}")
+    except Exception as e:
+        print(f"Error saving training data: {e}")
+
+def load_training_data(filename="training_data.json"):
+    """Loads training data from a JSON file."""
+    try:
+        with open(filename, "r") as f:
+            data = json.load(f)
+        print(f"Training data loaded from {filename}")
+        return data
+    except FileNotFoundError:
+        print(f"No training data file found at {filename}. Starting with an empty dataset.")
+        return []
+    except Exception as e:
+        print(f"Error loading training data: {e}")
+        return []
+
+def save_model(model, filename="autotrader_model.keras"):
+    """Saves the TensorFlow model to a file."""
+    try:
+        model.save(filename)
+        print(f"Model saved to {filename}")
+    except Exception as e:
+        print(f"Error saving model: {e}")
+
+def load_model(filename="autotrader_model.keras"):
+    """Loads the TensorFlow model from a file."""
+    try:
+        model = tf.keras.models.load_model(filename)
+        print(f"Loaded model from {filename}")
+        return model
+    except FileNotFoundError:
+        print(f"No model file found at {filename}. Creating a new model.")
+        return None  # Indicate that the model needs to be created
+    except Exception as e:
+        print(f"Error loading model: {e}. Creating a new model.")
+        return None
+
+def predict_optimal_trades(data, model):
     """
     Implement a placeholder machine learning algorithm using TensorFlow to predict optimal trades.
     This is a simplified example and would require proper model training and data preprocessing
     in a real-world scenario.
     """
-    if not isinstance(data, list) or not data:
-        raise ValueError("Invalid input format for prediction: Expected a non-empty list.")
-
-    # Dummy TensorFlow model for demonstration
-    # In a real scenario, you would load a pre-trained model
-    model = tf.keras.Sequential([
-        tf.keras.layers.Dense(10, activation='relu', input_shape=(1,)),
-        tf.keras.layers.Dense(1, activation='sigmoid')
-    ])
-    model.compile(optimizer='adam', loss='binary_crossentropy')
+    if model is None or not isinstance(data, list) or not data:
+        return {"signal": "HOLD", "prediction_score": 0.5}  # Default if no data
 
     # Extract a numerical feature from the market data for prediction
     # For this example, we expect a list of market objects and will try to find BTC-AUD
@@ -52,13 +115,17 @@ def predict_optimal_trades(data):
         print("Warning: 'BTC-AUD' market data or 'lastPrice' not found in the response.")
         # Fallback if specific market data isn't found, or handle as an error
         # For now, we'll proceed with 0.0, but a real app might raise an error or log more.
-    
+
     # Normalize or scale the input feature if necessary for the model
     # For this dummy model, a simple scaling. Adjust based on expected price range.
-    scaled_input = np.array([[input_feature / 50000.0]]) # Example scaling, assuming max price around 50000
+    scaled_input = np.array([[input_feature / 50000.0]])  # Example scaling, assuming max price around 50000
 
     # Make a prediction
-    prediction_raw = model.predict(scaled_input)[0][0]
+    try:
+        prediction_raw = model.predict(scaled_input, verbose=0)[0][0]
+    except Exception as e:
+        print(f"Error during prediction: {e}")
+        return {"signal": "HOLD", "prediction_score": 0.5}  # Default if prediction fails
 
     # Convert prediction to a trading signal
     if prediction_raw > 0.6:
@@ -85,10 +152,56 @@ def simulate_trades(prediction):
 
 # Main entry point
 if __name__ == "__main__":
+    # Load existing training data and model
+    training_data = load_training_data()
+    model_filename = "autotrader_model.keras"
+    model = load_model(model_filename)
+
+    if model is None:
+        print(f"Creating a new model.")
+        model = tf.keras.Sequential([
+            tf.keras.layers.Dense(10, activation='relu', input_shape=(1,)),
+            tf.keras.layers.Dense(1, activation='sigmoid')
+        ])
+        model.compile(optimizer='adam', loss='binary_crossentropy')
+
+    # Collect new training data
+    new_data = collect_training_data(num_samples=10)
+    training_data.extend(new_data)
+
+    # Prepare data for training (very basic example)
+    if training_data:
+        # In a real application, you'd want to do proper feature engineering and labeling
+        # For this example, we'll use the price as the input and a simple up/down label
+        prices = np.array(training_data)
+        # Create labels: 1 if price increased, 0 if decreased or stayed the same
+        labels = np.array([1 if i > 0 and prices[i] > prices[i-1] else 0 for i in range(1, len(prices))])
+        # Prepare inputs
+        inputs = np.array([[price / 50000.0] for price in prices[1:]])  # Scale the prices
+        # Train the model
+        if len(inputs) > 0 and len(labels) > 0:
+            model.fit(inputs, labels, epochs=2, verbose=0)  # Reduced epochs for demonstration
+            print("Model trained.")
+        else:
+            print("Not enough data to train the model.")
+    else:
+        print("No training data available.")
+
+    # Save the training data
+    save_training_data(training_data)
+
+    # Fetch market data for prediction
     try:
         market_data = fetch_market_data()
         # If data fetched successfully, run the simulation
-        trade_prediction = predict_optimal_trades(market_data)
-        simulate_trades(trade_prediction)
+        if model:
+            trade_prediction = predict_optimal_trades(market_data, model)
+            simulate_trades(trade_prediction)
+        else:
+            print("Model not loaded or created. Cannot make predictions.")
     except Exception as e:
         print(f"Error during autotrader execution: {str(e)}")
+
+    # Save the model
+    if model:
+        save_model(model, model_filename)
