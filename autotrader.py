@@ -657,4 +657,16 @@ class ContinuousAutoTrader:
             except KeyboardInterrupt:
                 logger.info("Received shutdown signal, saving all data...")
                 self.save_training_data()
-                self.save_model
+                self.save_model()
+                self.save_scalers()
+                self.save_state()
+                logger.info("Shutdown complete")
+                break
+            except Exception as e:
+                logger.error(f"Unexpected error in trading loop: {e}")
+                time.sleep(60)  # Wait before retrying
+
+
+if __name__ == "__main__":
+    trader = ContinuousAutoTrader()
+    trader.run_continuous_trading()
