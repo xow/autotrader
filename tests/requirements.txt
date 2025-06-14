@@ -1,0 +1,29 @@
+# Testing dependencies for autotrader
+pytest>=7.0.0
+pytest-cov>=4.0.0
+pytest-mock>=3.10.0
+pytest-asyncio>=0.21.0
+pytest-xdist>=3.2.0
+pytest-benchmark>=4.0.0
+
+# Memory and performance monitoring
+psutil>=5.9.0
+memory-profiler>=0.60.0
+
+# Mock and testing utilities
+requests-mock>=1.10.0
+responses>=0.23.0
+freezegun>=1.2.0
+
+# Code quality and coverage
+coverage>=7.0.0
+pytest-html>=3.1.0
+pytest-json-report>=1.5.0
+
+# Data manipulation for test utilities
+numpy>=1.21.0
+pandas>=1.5.0
+scikit-learn>=1.2.0
+
+# TensorFlow for model testing (should match main requirements)
+tensorflow>=2.10.0,<2.14.0

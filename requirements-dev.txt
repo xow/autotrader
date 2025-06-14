@@ -1,0 +1,345 @@
+# Development dependencies for Autotrader Bot
+# These are additional packages needed for development, testing, and code quality
+
+# Include production dependencies
+-r requirements.txt
+
+# Testing Framework
+pytest>=7.0.0,<8.0.0
+pytest-cov>=4.0.0,<5.0.0
+pytest-asyncio>=0.21.0,<1.0.0
+pytest-mock>=3.10.0,<4.0.0
+pytest-xdist>=3.0.0,<4.0.0
+pytest-benchmark>=4.0.0,<5.0.0
+pytest-watch>=4.2.0,<5.0.0
+pytest-html>=3.1.0,<4.0.0
+pytest-json-report>=1.5.0,<2.0.0
+
+# Code Quality and Linting
+black>=23.0.0,<24.0.0
+isort>=5.12.0,<6.0.0
+flake8>=6.0.0,<7.0.0
+mypy>=1.0.0,<2.0.0
+pylint>=2.17.0,<3.0.0
+bandit>=1.7.0,<2.0.0
+
+# Pre-commit Hooks
+pre-commit>=3.0.0,<4.0.0
+
+# Documentation Generation
+sphinx>=6.0.0,<8.0.0
+sphinx-rtd-theme>=1.2.0,<2.0.0
+sphinx-autodoc-typehints>=1.22.0,<2.0.0
+myst-parser>=1.0.0,<3.0.0
+
+# Jupyter and Interactive Development
+jupyter>=1.0.0,<2.0.0
+jupyterlab>=3.6.0,<5.0.0
+ipython>=8.10.0,<9.0.0
+ipykernel>=6.21.0,<7.0.0
+notebook>=6.5.0,<8.0.0
+
+# Performance Profiling
+py-spy>=0.3.0,<1.0.0
+line-profiler>=4.0.0,<5.0.0
+scalene>=1.5.0,<2.0.0
+
+# Memory Debugging
+pympler>=0.9,<1.0
+objgraph>=3.5.0,<4.0.0
+guppy3>=3.1.0,<4.0.0
+
+# Mock and Testing Utilities
+responses>=0.23.0,<1.0.0
+factory-boy>=3.2.0,<4.0.0
+faker>=18.0.0,<20.0.0
+freezegun>=1.2.0,<2.0.0
+
+# API Testing
+httpretty>=1.1.0,<2.0.0
+aioresponses>=0.7.0,<1.0.0
+
+# Load Testing
+locust>=2.14.0,<3.0.0
+
+# Static Analysis
+vulture>=2.7,<3.0
+dead>=1.5.0,<2.0.0
+pyflakes>=3.0.0,<4.0.0
+mccabe>=0.7.0,<1.0.0
+
+# Security Analysis
+safety>=2.3.0,<3.0.0
+pip-audit>=2.5.0,<3.0.0
+
+# Type Checking Extensions
+types-requests>=2.28.0,<3.0.0
+types-python-dateutil>=2.8.0,<3.0.0
+types-PyYAML>=6.0.0,<7.0.0
+types-setuptools>=67.0.0,<69.0.0
+
+# Dependency Management
+pip-tools>=6.12.0,<8.0.0
+pipdeptree>=2.7.0,<3.0.0
+
+# Build Tools
+setuptools>=67.0.0,<69.0.0
+wheel>=0.40.0,<1.0.0
+build>=0.10.0,<1.0.0
+twine>=4.0.0,<5.0.0
+
+# Environment Management
+pipenv>=2023.3.0,<2024.0.0
+virtualenv>=20.21.0,<21.0.0
+
+# Git Hooks and Workflow
+gitpython>=3.1.0,<4.0.0
+commitizen>=3.0.0,<4.0.0
+
+# Database Tools (for testing)
+sqlalchemy-utils>=0.40.0,<1.0.0
+alembic>=1.10.0,<2.0.0
+
+# Configuration Testing
+pyfakefs>=5.2.0,<6.0.0
+pytest-env>=0.8.0,<1.0.0
+
+# Monitoring and Observability
+structlog>=23.0.0,<24.0.0
+prometheus-client>=0.16.0,<1.0.0
+
+# Enhanced CLI Development
+rich>=13.0.0,<14.0.0
+typer>=0.7.0,<1.0.0
+
+# API Documentation
+apispec>=6.3.0,<7.0.0
+apispec-webframeworks>=0.5.0,<1.0.0
+
+# Debugging Tools
+pdb++>=0.10.0,<1.0.0
+pudb>=2022.1.0,<2024.0.0
+icecream>=2.1.0,<3.0.0
+
+# Enhanced REPL
+ptpython>=3.0.0,<4.0.0
+bpython>=0.24,<1.0
+
+# File Watching for Development
+watchfiles>=0.19.0,<1.0.0
+
+# Enhanced Diff Tools
+deepdiff>=6.3.0,<7.0.0
+
+# Data Validation Testing
+hypothesis>=6.70.0,<7.0.0
+hypothesis-pytest>=0.19.0,<1.0.0
+
+# Network Testing
+wiremock>=2.6.0,<3.0.0
+
+# Performance Testing
+pytest-benchmark>=4.0.0,<5.0.0
+asv>=0.5.0,<1.0.0
+
+# Code Coverage Visualization
+coverage-badge>=1.1.0,<2.0.0
+
+# License Checking
+licensecheck>=2023.1.0,<2024.0.0
+
+# Dependency Vulnerability Scanning
+cyclonedx-bom>=3.11.0,<4.0.0
+
+# Code Complexity Analysis
+radon>=6.0.0,<7.0.0
+xenon>=0.9.0,<1.0.0
+
+# Import Analysis
+importlib-metadata>=6.0.0,<7.0.0
+importlib-resources>=5.12.0,<7.0.0
+
+# Enhanced Logging for Development
+loguru>=0.7.0,<1.0.0
+colorlog>=6.7.0,<7.0.0
+
+# Configuration File Validation
+cerberus>=1.3.0,<2.0.0
+marshmallow>=3.19.0,<4.0.0
+
+# Enhanced Exception Handling for Development
+traceback2>=1.4.0,<2.0.0
+pretty-errors>=1.2.0,<2.0.0
+
+# Code Formatting
+autopep8>=2.0.0,<3.0.0
+yapf>=0.32.0,<1.0.0
+
+# Import Sorting
+seed-isort-config>=2.2.0,<3.0.0
+
+# Stub Generation
+mypy-protobuf>=3.4.0,<4.0.0
+stubgen>=1.0.0,<2.0.0
+
+# Enhanced String Processing for Testing
+stringcase>=1.2.0,<2.0.0
+
+# File System Testing
+pyfakefs>=5.2.0,<6.0.0
+
+# Time/Date Testing
+time-machine>=2.9.0,<3.0.0
+
+# Environment Variable Testing
+pytest-env>=0.8.0,<1.0.0
+
+# Temporary File Testing
+pytest-tmp-files>=0.1.0,<1.0.0
+
+# Log Testing
+pytest-logging>=2016.11.4,<2025.0.0
+
+# Subprocess Testing
+pytest-subprocess>=1.5.0,<2.0.0
+
+# Socket Testing
+pytest-socket>=0.6.0,<1.0.0
+
+# HTTP Request Testing
+betamax>=0.8.0,<1.0.0
+vcrpy>=4.2.0,<5.0.0
+
+# Database Testing
+pytest-postgresql>=4.1.0,<5.0.0
+pytest-sqlite>=0.3.0,<1.0.0
+
+# Async Testing Utilities
+pytest-trio>=0.8.0,<1.0.0
+pytest-tornado>=0.8.0,<1.0.0
+
+# Parallel Testing
+pytest-parallel>=0.1.0,<1.0.0
+
+# Test Result Analysis
+pytest-json>=0.4.0,<1.0.0
+pytest-metadata>=3.0.0,<4.0.0
+
+# Enhanced Test Discovery
+pytest-testmon>=2.0.0,<3.0.0
+
+# Test Performance
+pytest-timeout>=2.1.0,<3.0.0
+pytest-rerunfailures>=11.1.0,<12.0.0
+
+# Code Quality Metrics
+sonar-python-plugin>=4.0.0,<5.0.0
+
+# Enhanced Debugging
+hunter>=3.5.0,<4.0.0
+
+# Code Search and Analysis
+semgrep>=1.21.0,<2.0.0
+
+# Enhanced Git Integration
+gitdb>=4.0.0,<5.0.0
+gitpython>=3.1.0,<4.0.0
+
+# Development Server
+flask>=2.3.0,<3.0.0
+flask-cors>=4.0.0,<5.0.0
+
+# API Testing Framework
+tavern>=2.0.0,<3.0.0
+
+# Enhanced Fixtures
+pytest-factoryboy>=2.5.0,<3.0.0
+
+# Data Generation for Testing
+mimesis>=9.0.0,<11.0.0
+
+# Enhanced Assertions
+assertpy>=1.1,<2.0
+
+# Test Reporting
+allure-pytest>=2.13.0,<3.0.0
+
+# Code Quality Dashboard
+codeclimate-test-reporter>=0.2.0,<1.0.0
+
+# Enhanced Documentation
+pdoc>=13.0.0,<15.0.0
+
+# Package Analysis
+pipreqs>=0.4.0,<1.0.0
+
+# License Analysis
+pip-licenses>=4.0.0,<5.0.0
+
+# Dependency Graph Visualization
+pipdeptree>=2.7.0,<3.0.0
+
+# Enhanced Shell Integration
+shellingham>=1.5.0,<2.0.0
+
+# Environment Detection
+platformdirs>=3.5.0,<4.0.0
+
+# Enhanced Path Operations
+pathspec>=0.11.0,<1.0.0
+
+# Configuration Validation
+dynaconf>=3.1.0,<4.0.0
+
+# Enhanced CLI Testing
+click-testing>=0.1.0,<1.0.0
+
+# Process Management
+supervisor>=4.2.0,<5.0.0
+
+# System Integration Testing
+docker>=6.1.0,<7.0.0
+docker-compose>=1.29.0,<2.0.0
+
+# Enhanced Mocking
+sure>=2.0.0,<3.0.0
+
+# Test Data Management
+test-data>=1.0.0,<2.0.0
+
+# Enhanced Test Organization
+pytest-describe>=2.1.0,<3.0.0
+pytest-bdd>=6.1.0,<7.0.0
+
+# Performance Regression Testing
+pytest-benchmark-compare>=0.1.0,<1.0.0
+
+# Enhanced Test Selection
+pytest-picked>=0.4.0,<1.0.0
+
+# Test Impact Analysis
+pytest-testmon>=2.0.0,<3.0.0
+
+# Enhanced Test Fixtures
+pytest-lazy-fixture>=0.6.0,<1.0.0
+
+# Test Data Factories
+model-mommy>=2.0.0,<3.0.0
+
+# Enhanced Test Parameterization
+pytest-cases>=3.6.0,<4.0.0
+
+# Test Execution Control
+pytest-ordering>=0.6,<1.0
+
+# Enhanced Test Discovery
+pytest-collect-formatter>=0.3.0,<1.0.0
+
+# Test Result Caching
+pytest-cache>=1.0,<2.0
+
+# Enhanced Test Output
+pytest-clarity>=1.0.0,<2.0.0
+
+# Test Execution Monitoring
+pytest-monitor>=1.6.0,<2.0.0

@@ -1,0 +1,91 @@
+# Default configuration for Autotrader Bot
+# Copy this file and customize for your environment
+
+api:
+  base_url: "https://api.btcmarkets.net"
+  # API credentials - set via environment variables or override here
+  api_key: null  # Set BTCMARKETS_API_KEY environment variable
+  api_secret: null  # Set BTCMARKETS_API_SECRET environment variable
+  rate_limit_requests: 50
+  rate_limit_window: 60
+  timeout: 30.0
+  retry_attempts: 3
+
+ml:
+  model_type: "lstm"
+  sequence_length: 60
+  features:
+    - "close"
+    - "volume" 
+    - "rsi"
+    - "macd"
+  hidden_units: 128
+  num_layers: 2
+  dropout_rate: 0.2
+  learning_rate: 0.001
+  batch_size: 32
+  validation_split: 0.2
+  
+  # Continuous learning settings
+  online_learning: true
+  adaptive_learning_rate: true
+  experience_replay_size: 10000
+  update_frequency: 1
+  
+  # Model persistence
+  checkpoint_interval: 100
+  max_checkpoints: 10
+  model_save_path: "models/"
+
+trading:
+  initial_balance: 10000.0
+  currency_pair: "BTC-AUD"
+  min_trade_amount: 25.0
+  max_position_size: 0.1
+  
+  # Risk management
+  stop_loss_pct: 0.02
+  take_profit_pct: 0.04
+  confidence_threshold: 0.6
+  
+  # Trading strategy
+  strategy_type: "momentum"
+  rebalance_frequency: 24
+  
+  # Fees simulation
+  maker_fee: 0.0085
+  taker_fee: 0.0085
+
+data:
+  data_dir: "data/"
+  max_data_points: 100000
+  data_retention_days: 365
+  compression_enabled: true
+  
+  # Real-time data
+  websocket_url: "wss://socket.btcmarkets.net/v2"
+  data_frequency: "1m"
+  buffer_size: 1000
+  
+  # Data validation
+  outlier_detection: true
+  outlier_threshold: 3.0
+  data_quality_checks: true
+
+system:
+  log_level: "INFO"
+  log_dir: "logs/"
+  
+  # Autonomous operation
+  max_runtime_hours: null  # null = unlimited
+  health_check_interval: 300
+  auto_restart: true
+  
+  # Resource management
+  max_memory_mb: 2048
+  cpu_limit_percent: 80.0
+  
+  # Monitoring
+  metrics_enabled: true
+  alert_email: null
+  status_report_interval: 3600

@@ -1,0 +1,52 @@
+{
+  "environment": "production",
+  "api": {
+    "base_url": "https://api.btcmarkets.net/v3",
+    "api_key": null,
+    "api_secret": null,
+    "timeout": 15,
+    "max_retries": 5,
+    "retry_delay": 3.0
+  },
+  "trading": {
+    "initial_balance": 10000.0,
+    "trade_amount": 0.01,
+    "fee_rate": 0.001,
+    "market_pair": "BTC-AUD",
+    "max_position_size": 0.1,
+    "stop_loss_percent": 0.015,
+    "take_profit_percent": 0.03,
+    "buy_confidence_threshold": 0.7,
+    "sell_confidence_threshold": 0.3,
+    "min_confidence_diff": 0.2,
+    "rsi_overbought": 80.0,
+    "rsi_oversold": 20.0
+  },
+  "ml": {
+    "model_filename": "autotrader_model.keras",
+    "scalers_filename": "scalers.pkl",
+    "sequence_length": 20,
+    "max_training_samples": 2000,
+    "lstm_units": 50,
+    "dropout_rate": 0.2,
+    "learning_rate": 0.001,
+    "dense_units": 25,
+    "epochs": 10,
+    "batch_size": 16,
+    "validation_split": 0.2,
+    "shuffle": false,
+    "feature_count": 12,
+    "enable_technical_indicators": true
+  },
+  "operations": {
+    "data_collection_interval": 60,
+    "save_interval": 1800,
+    "training_interval": 600,
+    "log_level": "INFO",
+    "log_file": "autotrader.log",
+    "training_data_filename": "training_data.json",
+    "state_filename": "trader_state.pkl",
+    "status_report_interval": 10,
+    "enable_detailed_logging": false
+  }
+}

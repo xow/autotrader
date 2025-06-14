@@ -1,0 +1,256 @@
+# Pre-commit hooks configuration
+# See https://pre-commit.com for more information
+
+repos:
+  # Standard pre-commit hooks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.4.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-json
+      - id: check-toml
+      - id: check-xml
+      - id: check-added-large-files
+        args: ['--maxkb=1000']
+      - id: check-case-conflict
+      - id: check-merge-conflict
+      - id: check-symlinks
+      - id: check-executables-have-shebangs
+      - id: check-shebang-scripts-are-executable
+      - id: debug-statements
+      - id: detect-private-key
+      - id: fix-byte-order-marker
+      - id: mixed-line-ending
+      - id: requirements-txt-fixer
+
+  # Python code formatting with Black
+  - repo: https://github.com/psf/black
+    rev: 23.3.0
+    hooks:
+      - id: black
+        language_version: python3
+        args: [--line-length=88]
+
+  # Import sorting with isort
+  - repo: https://github.com/pycqa/isort
+    rev: 5.12.0
+    hooks:
+      - id: isort
+        args: ["--profile", "black", "--filter-files"]
+
+  # Flake8 linting
+  - repo: https://github.com/pycqa/flake8
+    rev: 6.0.0
+    hooks:
+      - id: flake8
+        args: [--max-line-length=88, --extend-ignore=E203,W503]
+        additional_dependencies:
+          - flake8-docstrings
+          - flake8-bugbear
+          - flake8-comprehensions
+          - flake8-simplify
+
+  # Type checking with mypy
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.3.0
+    hooks:
+      - id: mypy
+        args: [--ignore-missing-imports, --strict-optional]
+        additional_dependencies:
+          - types-requests
+          - types-python-dateutil
+          - types-PyYAML
+
+  # Security linting with bandit
+  - repo: https://github.com/pycqa/bandit
+    rev: 1.7.5
+    hooks:
+      - id: bandit
+        args: ["-c", "pyproject.toml"]
+        additional_dependencies: ["bandit[toml]"]
+
+  # Docstring formatting
+  - repo: https://github.com/pycqa/pydocstyle
+    rev: 6.3.0
+    hooks:
+      - id: pydocstyle
+        args: [--convention=google]
+
+  # Upgrade Python syntax
+  - repo: https://github.com/asottile/pyupgrade
+    rev: v3.6.0
+    hooks:
+      - id: pyupgrade
+        args: [--py38-plus]
+
+  # Remove unused imports
+  - repo: https://github.com/pycqa/autoflake
+    rev: v2.1.1
+    hooks:
+      - id: autoflake
+        args:
+          - --in-place
+          - --remove-all-unused-imports
+          - --remove-unused-variables
+          - --remove-duplicate-keys
+          - --ignore-init-module-imports
+
+  # Check for common Python mistakes
+  - repo: https://github.com/pycqa/pylint
+    rev: v3.0.0a6
+    hooks:
+      - id: pylint
+        args: [--rcfile=pyproject.toml]
+        additional_dependencies:
+          - tensorflow
+          - numpy
+          - pandas
+          - scikit-learn
+          - requests
+
+  # Secrets detection
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.4.0
+    hooks:
+      - id: detect-secrets
+        args: ['--baseline', '.secrets.baseline']
+
+  # YAML formatting
+  - repo: https://github.com/pre-commit/mirrors-prettier
+    rev: v3.0.0-alpha.9-for-vscode
+    hooks:
+      - id: prettier
+        types: [yaml]
+
+  # Shell script linting
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.9.0.2
+    hooks:
+      - id: shellcheck
+
+  # Dockerfile linting
+  - repo: https://github.com/hadolint/hadolint
+    rev: v2.12.0
+    hooks:
+      - id: hadolint
+        args: [--ignore, DL3008, --ignore, DL3009]
+
+  # SQL formatting
+  - repo: https://github.com/sqlfluff/sqlfluff
+    rev: 2.1.2
+    hooks:
+      - id: sqlfluff-lint
+      - id: sqlfluff-fix
+
+  # Markdown linting
+  - repo: https://github.com/igorshubovych/markdownlint-cli
+    rev: v0.35.0
+    hooks:
+      - id: markdownlint
+        args: [--fix]
+
+  # Jupyter notebook formatting
+  - repo: https://github.com/nbQA-dev/nbQA
+    rev: 1.7.0
+    hooks:
+      - id: nbqa-black
+      - id: nbqa-isort
+      - id: nbqa-flake8
+
+  # Local hooks for project-specific checks
+  - repo: local
+    hooks:
+      # Check for TODO comments in production code
+      - id: check-todos
+        name: Check for TODO comments
+        entry: grep -rn "TODO\|FIXME\|XXX" --include="*.py" .
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+        verbose: true
+
+      # Ensure no debugging statements
+      - id: check-debug-statements
+        name: Check for debug statements
+        entry: bash -c 'if grep -rn "pdb.set_trace\|ipdb.set_trace\|breakpoint()" --include="*.py" .; then echo "Debug statements found!"; exit 1; fi'
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      # Check for hardcoded secrets
+      - id: check-hardcoded-secrets
+        name: Check for hardcoded secrets
+        entry: bash -c 'if grep -ri "password\|secret\|key.*=" --include="*.py" . | grep -v "test\|example"; then echo "Potential hardcoded secrets found!"; exit 1; fi'
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      # Ensure requirements.txt is sorted
+      - id: sort-requirements
+        name: Sort requirements.txt
+        entry: sort requirements.txt -o requirements.txt
+        language: system
+        files: requirements.txt
+
+      # Check that tests exist for new Python files
+      - id: check-tests-exist
+        name: Check that tests exist
+        entry: bash -c 'for file in $(git diff --cached --name-only --diff-filter=A | grep "\.py$" | grep -v "test_" | grep -v "__init__"); do test_file="tests/unit/test_$(basename "$file")"; if [ ! -f "$test_file" ]; then echo "No test file found for $file (expected $test_file)"; exit 1; fi; done'
+        language: system
+        pass_filenames: false
+        always_run: false
+        stages: [pre-commit]
+
+      # Run tests before commit
+      - id: run-tests
+        name: Run tests
+        entry: python -m pytest tests/unit/ -x --tb=short
+        language: system
+        pass_filenames: false
+        always_run: false
+        stages: [pre-push]
+
+      # Check code complexity
+      - id: check-complexity
+        name: Check code complexity
+        entry: python -m radon cc . -a -nb
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      # Check for large files
+      - id: check-file-size
+        name: Check file size
+        entry: bash -c 'find . -type f -size +500k -not -path "./.git/*" -not -path "./venv/*" -not -path "./__pycache__/*" | while read file; do echo "Large file found: $file"; done'
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      # Validate configuration files
+      - id: validate-config
+        name: Validate configuration files
+        entry: python -c "import yaml, json, sys; [yaml.safe_load(open(f)) for f in sys.argv[1:] if f.endswith('.yaml') or f.endswith('.yml')]; [json.load(open(f)) for f in sys.argv[1:] if f.endswith('.json')]"
+        language: system
+        files: \.(yaml|yml|json)$
+
+# Global configuration
+default_language_version:
+  python: python3
+
+minimum_pre_commit_version: "2.20.0"
+
+# CI configuration
+ci:
+  autofix_commit_msg: |
+    [pre-commit.ci] auto fixes from pre-commit.com hooks
+
+    for more information, see https://pre-commit.ci
+  autofix_prs: true
+  autoupdate_branch: ''
+  autoupdate_commit_msg: '[pre-commit.ci] pre-commit autoupdate'
+  autoupdate_schedule: weekly
+  skip: []
+  submodules: false

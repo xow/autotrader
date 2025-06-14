@@ -1,0 +1,153 @@
+# Core dependencies for Autotrader Bot
+# Production requirements for machine learning and trading functionality
+
+# Machine Learning Framework
+tensorflow>=2.13.0,<3.0.0
+numpy>=1.21.0,<2.0.0
+pandas>=1.5.0,<3.0.0
+scikit-learn>=1.3.0,<2.0.0
+
+# API and Network Communication  
+requests>=2.28.0,<3.0.0
+aiohttp>=3.8.0,<4.0.0
+websockets>=10.0,<12.0
+
+# Technical Analysis (Optional but recommended)  
+# Uncomment if you want technical indicators
+# talib-binary>=0.4.19
+
+# Configuration and Environment
+python-dotenv>=0.19.0,<2.0.0
+pyyaml>=6.0,<7.0
+configparser>=5.2.0,<6.0.0
+
+# Date and Time Utilities
+python-dateutil>=2.8.0,<3.0.0
+pytz>=2022.1
+
+# Data Validation and Processing
+jsonschema>=4.0.0,<5.0.0
+pydantic>=1.10.0,<3.0.0
+
+# Performance and Monitoring
+psutil>=5.9.0,<6.0.0
+memory-profiler>=0.60.0,<1.0.0
+tqdm>=4.64.0,<5.0.0
+
+# API Security and Authentication
+cryptography>=3.4.0,<42.0.0
+urllib3>=1.26.0,<3.0.0
+certifi>=2022.0.0
+
+# Enhanced JSON and Data Processing
+ujson>=5.4.0,<6.0.0
+msgpack>=1.0.0,<2.0.0
+
+# Mathematical and Statistical Operations
+scipy>=1.9.0,<2.0.0
+numba>=0.56.0,<1.0.0
+statsmodels>=0.13.0,<1.0.0
+
+# Plotting and Visualization
+matplotlib>=3.5.0,<4.0.0
+seaborn>=0.11.0,<1.0.0
+
+# CLI and User Interface
+click>=8.0.0,<9.0.0
+colorama>=0.4.0,<1.0.0
+
+# Async and Concurrency
+asyncio-throttle>=1.0.2,<2.0.0
+
+# Retry Logic and Rate Limiting
+tenacity>=8.0.0,<9.0.0
+ratelimit>=2.2.0,<3.0.0
+
+# Caching and Storage
+diskcache>=5.4.0,<6.0.0
+joblib>=1.2.0,<2.0.0
+
+# Database (if using SQLAlchemy for advanced features)
+sqlalchemy>=1.4.0,<3.0.0
+aiosqlite>=0.17.0,<1.0.0
+
+# Scheduling
+apscheduler>=3.9.0,<4.0.0
+
+# Enhanced Logging
+structlog>=22.0.0,<24.0.0
+
+# File System Monitoring
+watchdog>=2.1.0,<4.0.0
+
+# Fast Data Structures and Algorithms
+sortedcontainers>=2.4.0,<3.0.0
+more-itertools>=8.13.0,<10.0.0
+
+# Enhanced Exception Handling
+better-exceptions>=0.3.0,<1.0.0
+
+# Fast Compression
+lz4>=4.0.0,<5.0.0
+zstandard>=0.18.0,<1.0.0
+
+# Enhanced Serialization
+dill>=0.3.0,<1.0.0
+cloudpickle>=2.2.0,<3.0.0
+
+# Fast HTTP Client
+httpx>=0.23.0,<1.0.0
+
+# Type Checking Support
+typeguard>=2.13.0,<3.0.0
+
+# Enhanced Decimal and Numeric Operations
+decorator>=5.1.0,<6.0.0
+
+# System and Platform Information
+distro>=1.7.0,<2.0.0; sys_platform == "linux"
+py-cpuinfo>=8.0.0,<10.0.0
+
+# Timezone Handling
+tzlocal>=4.2,<6.0
+arrow>=1.2.0,<2.0.0
+
+# Fast Hash Functions
+xxhash>=3.0.0,<4.0.0
+
+# Enhanced Regular Expressions
+regex>=2022.0.0,<2024.0.0
+
+# Fast Numerical Operations
+bottleneck>=1.3.0,<2.0.0
+numexpr>=2.8.0,<3.0.0
+
+# Data Processing Acceleration
+pyrsistent>=0.18.0,<1.0.0
+
+# Multiprocessing Enhancements  
+multiprocess>=0.70.0,<1.0.0
+
+# Network Utilities
+netifaces>=0.11.0,<1.0.0
+
+# Fast Image Processing (for potential chart analysis)
+pillow>=9.2.0,<11.0.0
+
+# XML Processing (if needed for config files)
+lxml>=4.9.0,<6.0.0
+
+# Mathematical Functions
+mpmath>=1.2.0,<2.0.0
+
+# String Similarity (for fuzzy matching)
+fuzzywuzzy>=0.18.0,<1.0.0
+
+# Enhanced CSV Processing
+# python-csv is built-in, no external package needed
+
+# Network and Protocol Utilities
+# Most are built-in or covered by requests/aiohttp
+
+# Note: This requirements.txt includes only packages that exist and are useful
+# Remove any packages you don't need to keep the installation lean

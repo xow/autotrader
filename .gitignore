@@ -1,21 +1,191 @@
-# This is a suggested .gitignore file for the project
-
-# Any files or directories to ignore should be listed here.
-
-# Common patterns:
-build/
-dist/
-
-*.keras
+# Byte-compiled / optimized / DLL files
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+test-results/
+
+# Translations
+*.mo
+*.pot
+
+# Django stuff:
 *.log
-*.swp
-.DS_Store
-*.egg-info
-venv/
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+
+# Flask stuff:
+instance/
+.webassets-cache
+
+# Scrapy stuff:
+.scrapy
+
+# Sphinx documentation
+docs/_build/
+
+# PyBuilder
+target/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# pyenv
+.python-version
+
+# pipenv
+Pipfile.lock
+
+# PEP 582
+__pypackages__/
+
+# Celery stuff
+celerybeat-schedule
+celerybeat.pid
+
+# SageMath parsed files
+*.sage.py
+
+# Environments
+.env
+.venv
 env/
-/.pytest_cache
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Spyder project settings
+.spyderproject
+.spyproject
+
+# Rope project settings
+.ropeproject
+
+# mkdocs documentation
+/site
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+# Machine Learning / Data Science
+*.keras
+*.h5
+*.hdf5
+*.pkl
+*.pickle
+*.joblib
+*.model
+*.weights
+*.ckpt
+*.pb
+*.pth
+*.tar
+*.zip
+data/
+datasets/
+models/
+checkpoints/
+logs/
+tensorboard_logs/
+mlruns/
+*.npy
+*.npz
+
+# Project-specific files
 autotrader_model.keras
 training_data.json
 trader_state.pkl
+scalers.pkl
+*.log
+*.log.*
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.orig
+
+# Configuration files with sensitive data
+config/production.json
+config/secrets.json
+.env.local
+.env.production
+
+# Documentation build
+docs/build/
+docs/_build/
+site/
+
+# Coverage reports
+htmlcov/
+.coverage
+coverage.xml
+
+# Profiling data
+*.prof
+*.profile
