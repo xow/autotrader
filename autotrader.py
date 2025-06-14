@@ -133,13 +133,14 @@ def predict_optimal_trades(data, model):
         return {"signal": "HOLD", "prediction_score": 0.5}  # Default if prediction fails
 
     # Convert prediction to a trading signal
-    if prediction_raw > 0.6:
+    if prediction_raw > 0.5:
         signal = "BUY"
-    elif prediction_raw < 0.4:
+    elif prediction_raw < 0.5:
         signal = "SELL"
     else:
         signal = "HOLD"
 
+    print(f"Prediction raw: {prediction_raw}")
     return {"signal": signal, "prediction_score": float(prediction_raw)}
 
 def simulate_trades(prediction):
@@ -184,12 +185,10 @@ if __name__ == "__main__":
                 labels = np.array([1 if i > 0 and prices[i] > prices[i-1] else 0 for i in range(1, len(prices))])
                 inputs = np.array([[price / 50000.0] for price in prices[1:]])  # Scale the prices
                 if len(inputs) > 0 and len(labels) > 0:
-                    model.fit(inputs, labels, epochs=2, verbose=0)  # Reduced epochs for demonstration
-                    print("Model trained.")
+                    history = model.fit(inputs, labels, epochs=2, verbose=0)  # Reduced epochs for demonstration
+                    print(f"Model trained. Loss: {history.history['loss'][-1]}")
                 else:
                     print("Not enough data to train the model.")
-            else:
-                print("No training data available.")
 
             # Fetch market data for prediction
             market_data = fetch_market_data()

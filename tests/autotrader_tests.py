@@ -32,7 +32,7 @@ class TestAutotrader(unittest.TestCase):
         model.compile(optimizer='adam', loss='binary_crossentropy')
         data = [{'marketId': 'BTC-AUD', 'lastPrice': '50000'}, {'marketId': 'ETH-AUD', 'lastPrice': '3000'}]
         prediction = autotrader.predict_optimal_trades(data, model)
-        self.assertEqual(prediction["signal"], "HOLD")
+        self.assertEqual(prediction["signal"], "BUY")
 
     def test_predict_optimal_trades_sell(self):
         # Create a simple model
@@ -43,7 +43,7 @@ class TestAutotrader(unittest.TestCase):
         model.compile(optimizer='adam', loss='binary_crossentropy')
         data = [{'marketId': 'BTC-AUD', 'lastPrice': '50000'}, {'marketId': 'ETH-AUD', 'lastPrice': '3000'}, {'marketId': 'LTC-AUD', 'lastPrice': '100'}, {'marketId': 'XRP-AUD', 'lastPrice': '0.5'}, {'marketId': 'ADA-AUD', 'lastPrice': '1'}]
         prediction = autotrader.predict_optimal_trades(data, model)
-        self.assertEqual(prediction["signal"], "HOLD")
+        self.assertEqual(prediction["signal"], "SELL")
 
     def test_predict_optimal_trades_invalid_input(self):
         # Create a simple model
