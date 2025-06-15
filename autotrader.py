@@ -194,90 +194,108 @@ class ContinuousAutoTrader:
         return ema
 
     def manual_rsi(self, prices: np.ndarray, period: int = 14) -> float:
-        """Manual RSI calculation."""
-        if len(prices) < period + 1:
-            return 50  # Neutral RSI
-        
-        deltas = np.diff(prices)
-        gains = np.where(deltas > 0, deltas, 0)
-        losses = np.where(deltas < 0, -deltas, 0)
-        
-        avg_gain = np.mean(gains[-period:])
-        avg_loss = np.mean(losses[-period:])
-        
-        if avg_loss == 0:
-            return 100
-        
-        rs = avg_gain / avg_loss
-        rsi = 100 - (100 / (1 + rs))
-        return rsi
+        """Manual RSI calculation with improved handling of edge cases."""
+        try:
+            if len(prices) < period + 1:
+                return 50.0  # Neutral RSI if not enough data
+                
+            deltas = np.diff(prices)
+            
+            # Handle case where there's no price movement
+            if np.all(deltas == 0):
+                return 50.0
+                
+            gains = np.where(deltas > 0, deltas, 0)
+            losses = np.where(deltas < 0, -deltas, 0)
+            
+            # Calculate average gain and loss using exponential moving average
+            avg_gain = np.mean(gains[:period])
+            avg_loss = np.mean(losses[:period])
+            
+            for i in range(period, len(gains)):
+                avg_gain = (avg_gain * (period - 1) + gains[i]) / period
+                avg_loss = (avg_loss * (period - 1) + losses[i]) / period
+            
+            # Avoid division by zero
+            if avg_loss < 1e-10:
+                return 100.0 if avg_gain > 1e-10 else 50.0
+                
+            rs = avg_gain / avg_loss
+            rsi = 100 - (100 / (1 + rs))
+            
+            # Ensure RSI is within valid range
+            return max(0.0, min(100.0, rsi))
+            
+        except Exception as e:
+            logger.warning(f"Error in RSI calculation: {e}")
+            return 50.0  # Return neutral RSI on error
 
     def calculate_technical_indicators(self, prices: np.ndarray, volumes: np.ndarray) -> Dict[str, float]:
-        """Calculate technical indicators using TA-Lib or manual calculations."""
-        if len(prices) < 20:  # Need minimum data for indicators
-            return {
-                'sma_5': 0, 'sma_20': 0, 'ema_12': 0, 'ema_26': 0,
-                'rsi': 50, 'macd': 0, 'macd_signal': 0, 'bb_upper': 0,
-                'bb_lower': 0, 'volume_sma': 0
-            }
+        """
+        Calculate technical indicators using TA-Lib or manual calculations.
+        Returns a dictionary of indicator values with proper error handling.
+        """
+        # Default values for indicators
+        default_indicators = {
+            'sma_5': 0.0, 'sma_20': 0.0, 'ema_12': 0.0, 'ema_26': 0.0,
+            'rsi': 50.0, 'macd': 0.0, 'macd_signal': 0.0, 'bb_upper': 0.0,
+            'bb_lower': 0.0, 'volume_sma': 0.0
+        }
+        
+        # Return defaults if not enough data
+        if len(prices) < 5:  # Minimum needed for any indicators
+            logger.warning(f"Insufficient data points for indicators: {len(prices)} < 5")
+            return default_indicators
         
         try:
-            if TALIB_AVAILABLE:
-                # Use TA-Lib if available
-                sma_5 = talib.SMA(prices, timeperiod=5)[-1] if len(prices) >= 5 else prices[-1]
-                sma_20 = talib.SMA(prices, timeperiod=20)[-1] if len(prices) >= 20 else prices[-1]
-                ema_12 = talib.EMA(prices, timeperiod=12)[-1] if len(prices) >= 12 else prices[-1]
-                ema_26 = talib.EMA(prices, timeperiod=26)[-1] if len(prices) >= 26 else prices[-1]
-                rsi = talib.RSI(prices, timeperiod=14)[-1] if len(prices) >= 14 else 50
-                
-                macd, macd_signal, _ = talib.MACD(prices)
-                macd_val = macd[-1] if len(macd) > 0 and not np.isnan(macd[-1]) else 0
-                macd_signal_val = macd_signal[-1] if len(macd_signal) > 0 and not np.isnan(macd_signal[-1]) else 0
-                
-                bb_upper, bb_middle, bb_lower = talib.BBANDS(prices)
-                bb_upper_val = bb_upper[-1] if len(bb_upper) > 0 and not np.isnan(bb_upper[-1]) else prices[-1]
-                bb_lower_val = bb_lower[-1] if len(bb_lower) > 0 and not np.isnan(bb_lower[-1]) else prices[-1]
-                
-                volume_sma = talib.SMA(volumes, timeperiod=10)[-1] if len(volumes) >= 10 else volumes[-1]
-            else:
-                # Use manual calculations
-                sma_5 = self.manual_sma(prices, 5)
-                sma_20 = self.manual_sma(prices, 20)
-                ema_12 = self.manual_ema(prices, 12)
-                ema_26 = self.manual_ema(prices, 26)
-                rsi = self.manual_rsi(prices, 14)
-                
-                # Simplified MACD
-                macd_val = ema_12 - ema_26
-                macd_signal_val = self.manual_ema(np.array([macd_val]), 9)
-                
-                # Simplified Bollinger Bands
-                bb_middle = sma_20
-                bb_std = np.std(prices[-20:]) if len(prices) >= 20 else 0
-                bb_upper_val = bb_middle + (2 * bb_std)
-                bb_lower_val = bb_middle - (2 * bb_std)
-                
-                volume_sma = self.manual_sma(volumes, 10)
+            # Ensure inputs are numpy arrays
+            prices = np.asarray(prices, dtype=np.float64)
+            volumes = np.asarray(volumes, dtype=np.float64)
             
-            return {
-                'sma_5': float(sma_5),
-                'sma_20': float(sma_20),
-                'ema_12': float(ema_12),
-                'ema_26': float(ema_26),
-                'rsi': float(rsi),
-                'macd': float(macd_val),
-                'macd_signal': float(macd_signal_val),
-                'bb_upper': float(bb_upper_val),
-                'bb_lower': float(bb_lower_val),
-                'volume_sma': float(volume_sma)
-            }
+            # Calculate indicators
+            indicators = {}
+            
+            # Simple Moving Averages
+            indicators['sma_5'] = float(self.manual_sma(prices, 5) if len(prices) >= 5 else prices[-1])
+            indicators['sma_20'] = float(self.manual_sma(prices, 20) if len(prices) >= 20 else prices[-1])
+            
+            # Exponential Moving Averages
+            indicators['ema_12'] = float(self.manual_ema(prices, 12) if len(prices) >= 12 else prices[-1])
+            indicators['ema_26'] = float(self.manual_ema(prices, 26) if len(prices) >= 26 else prices[-1])
+            
+            # RSI
+            indicators['rsi'] = float(self.manual_rsi(prices, 14))
+            
+            # MACD
+            macd_val = indicators['ema_12'] - indicators['ema_26']
+            macd_signal = self.manual_ema(np.array([macd_val]), 9)
+            indicators['macd'] = float(macd_val)
+            indicators['macd_signal'] = float(macd_signal)
+            
+            # Bollinger Bands
+            bb_middle = indicators['sma_20']
+            bb_std = np.std(prices[-20:]) if len(prices) >= 20 else 0
+            indicators['bb_upper'] = float(bb_middle + (2 * bb_std))
+            indicators['bb_lower'] = float(bb_middle - (2 * bb_std))
+            
+            # Volume SMA
+            indicators['volume_sma'] = float(self.manual_sma(volumes, 10) if len(volumes) >= 10 else volumes[-1])
+            
+            # Log indicator values for debugging
+            logger.debug(
+                f"Indicators - "
+                f"Price: {prices[-1]:.2f}, "
+                f"RSI: {indicators['rsi']:.2f}, "
+                f"MACD: {indicators['macd']:.2f}, "
+                f"Signal: {indicators['macd_signal']:.2f}, "
+                f"BB: {indicators['bb_upper']:.2f}/{indicators['bb_lower']:.2f}"
+            )
+            
+            return indicators
+            
         except Exception as e:
-            logger.warning(f"Error calculating technical indicators: {e}")
-            return {
-                'sma_5': 0, 'sma_20': 0, 'ema_12': 0, 'ema_26': 0,
-                'rsi': 50, 'macd': 0, 'macd_signal': 0, 'bb_upper': 0,
-                'bb_lower': 0, 'volume_sma': 0
-            }
+            logger.error(f"Error calculating technical indicators: {e}", exc_info=True)
+            return default_indicators
 
     def collect_and_store_data(self):
         """Collect current market data and add to training dataset."""
@@ -328,23 +346,25 @@ class ContinuousAutoTrader:
     def create_lstm_model(self):
         """Create a new LSTM model for sequential data."""
         model = tf.keras.Sequential([
-            tf.keras.layers.LSTM(50, return_sequences=True, input_shape=(self.sequence_length, 12)),  # 12 features
-            tf.keras.layers.Dropout(0.2),
-            tf.keras.layers.LSTM(50, return_sequences=True),
-            tf.keras.layers.Dropout(0.2),
-            tf.keras.layers.LSTM(50),
-            tf.keras.layers.Dropout(0.2),
-            tf.keras.layers.Dense(25, activation='relu'),
-            tf.keras.layers.Dense(1, activation='sigmoid')
-        ])
+            tf.keras.layers.InputLayer(input_shape=(self.sequence_length, 12), name='input_layer'),
+            tf.keras.layers.LSTM(64, return_sequences=True, name='lstm_1'),
+            tf.keras.layers.BatchNormalization(),
+            tf.keras.layers.Dropout(0.3, name='dropout_1'),
+            tf.keras.layers.LSTM(32, return_sequences=False, name='lstm_2'),
+            tf.keras.layers.BatchNormalization(),
+            tf.keras.layers.Dropout(0.3, name='dropout_2'),
+            tf.keras.layers.Dense(16, activation='relu', name='dense_1'),
+            tf.keras.layers.Dense(1, activation='sigmoid', name='output')
+        ], name='lstm_model')
         
         model.compile(
-            optimizer=tf.keras.optimizers.Adam(learning_rate=0.001),
+            optimizer=tf.keras.optimizers.Adam(learning_rate=0.0005),
             loss='binary_crossentropy',
-            metrics=['accuracy']
+            metrics=['accuracy', tf.keras.metrics.AUC(name='auc')]
         )
         
-        logger.info("New LSTM model created")
+        logger.info("New LSTM model created with input shape (None, %d, 12)", self.sequence_length)
+        model.summary(print_fn=logger.info)
         return model
 
     def prepare_features(self, data_point: Dict) -> np.ndarray:
@@ -400,46 +420,69 @@ class ContinuousAutoTrader:
 
     def prepare_lstm_training_data(self) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
         """Prepare sequential training data for LSTM with proper future prediction labeling."""
-        # Filter only valid dictionary entries
-        valid_data = [dp for dp in self.training_data if isinstance(dp, dict) and 'price' in dp]
-        
-        if len(valid_data) < self.sequence_length + 10:
-            logger.warning(f"Not enough valid data for LSTM training ({len(valid_data)} valid entries)")
-            return None, None
-        
         try:
-            # Fit scalers if not already fitted
-            if not self.scalers_fitted:
-                if not self.fit_scalers(valid_data):
-                    return None, None
-            
-            # Prepare sequences and labels
+            if len(self.training_data) <= self.sequence_length:
+                logger.warning(f"Not enough data points. Have {len(self.training_data)}, need at least {self.sequence_length + 1}")
+                return None, None
+                
             sequences = []
             labels = []
             
-            # Create sequences with proper future prediction labels
-            for i in range(len(valid_data) - self.sequence_length - 1):  # -1 for future label
-                # Create sequence of features
+            # Convert to list for easier slicing and filter valid data
+            valid_data = [d for d in self.training_data if 'price' in d and 'volume' in d and d['price'] > 0]
+            
+            if len(valid_data) <= self.sequence_length:
+                logger.warning(f"Not enough valid data points. Have {len(valid_data)}, need at least {self.sequence_length + 1}")
+                return None, None
+            
+            logger.info(f"Preparing LSTM training data from {len(valid_data)} valid data points")
+            
+            for i in range(len(valid_data) - self.sequence_length):
+                # Get sequence of data points
+                sequence = valid_data[i:i + self.sequence_length]
+                
+                # Extract features for each point in the sequence
                 sequence_features = []
-                for j in range(i, i + self.sequence_length):
-                    feature_vector = self.prepare_features(valid_data[j])
+                for j in range(len(sequence)):
+                    feature_vector = self.prepare_features(sequence[j])
                     sequence_features.append(feature_vector)
                 
-                # Scale the sequence
-                sequence_array = np.array(sequence_features)
-                scaled_sequence = self.feature_scaler.transform(sequence_array)
-                sequences.append(scaled_sequence)
-                
-                # Create label: will the price go up in the NEXT period?
-                current_price = valid_data[i + self.sequence_length]['price']
-                future_price = valid_data[i + self.sequence_length + 1]['price']
+                # The label is whether the price went up after the sequence
+                current_price = valid_data[i + self.sequence_length - 1]['price']
+                future_price = valid_data[i + self.sequence_length]['price']
                 label = 1 if future_price > current_price else 0
+                
+                sequences.append(sequence_features)
                 labels.append(label)
             
-            return np.array(sequences), np.array(labels)
+            if not sequences:
+                logger.warning("No valid sequences created")
+                return None, None
+                
+            # Convert to numpy arrays
+            X = np.array(sequences, dtype=np.float32)
+            y = np.array(labels, dtype=np.float32)
+            
+            logger.info(f"Created {len(X)} sequences with shape {X.shape} and {len(y)} labels")
+            
+            # Scale the features if we have enough data
+            if len(X) > 0 and hasattr(self, 'feature_scaler') and self.scalers_fitted:
+                try:
+                    n_samples, seq_len, n_features = X.shape
+                    X_reshaped = X.reshape(-1, n_features)
+                    X_scaled = self.feature_scaler.transform(X_reshaped)
+                    X = X_scaled.reshape(n_samples, seq_len, n_features)
+                    logger.debug(f"Successfully scaled features to shape {X.shape}")
+                except Exception as e:
+                    logger.error(f"Error scaling features: {e}")
+                    return None, None
+            else:
+                logger.warning("Skipping feature scaling - scaler not fitted")
+            
+            return X, y
             
         except Exception as e:
-            logger.error(f"Error preparing LSTM training data: {e}")
+            logger.error(f"Error in prepare_lstm_training_data: {e}")
             return None, None
 
     def train_model(self):
@@ -506,8 +549,17 @@ class ContinuousAutoTrader:
             # Reshape for LSTM prediction
             prediction_input = scaled_sequence.reshape(1, self.sequence_length, 12)
             
+            # Debug: Print input shape and model input shape
+            logger.debug(f"Prediction input shape: {prediction_input.shape}")
+            logger.debug(f"Model input shape: {self.model.input_shape}")
+            
             # Make prediction
-            prediction = self.model.predict(prediction_input, verbose=0)[0][0]
+            try:
+                prediction = self.model.predict(prediction_input, verbose=0)[0][0]
+                logger.debug(f"Prediction successful: {prediction}")
+            except Exception as e:
+                logger.error(f"Prediction failed: {e}")
+                return {"signal": "HOLD", "confidence": 0.5, "price": comprehensive_data['price']}
             
             # Convert to trading signal with more conservative thresholds
             if prediction > 0.65:
@@ -543,18 +595,18 @@ class ContinuousAutoTrader:
         rsi = prediction.get("rsi", 50)
         
         # More sophisticated trading logic
-        # Don't trade if confidence is too neutral or if RSI indicates extreme conditions
-        if abs(confidence - 0.5) < 0.15:  # Too uncertain
+        # Slightly lower confidence threshold to allow more trades
+        if abs(confidence - 0.5) < 0.1:  # Reduced from 0.15 to 0.1 to allow more trades
             logger.info(f"Confidence too neutral ({confidence:.3f}), holding position")
             return
         
-        # Avoid buying when extremely overbought or selling when extremely oversold
-        if signal == "BUY" and rsi > 80:
-            logger.info(f"RSI too high ({rsi:.1f}), avoiding BUY signal")
-            return
-        if signal == "SELL" and rsi < 20:
-            logger.info(f"RSI too low ({rsi:.1f}), avoiding SELL signal")
-            return
+        # Adjusted RSI thresholds to allow more trades while still managing risk
+        if signal == "BUY" and rsi > 75:  # Slightly more aggressive than 80
+            logger.info(f"RSI high ({rsi:.1f}), but proceeding with BUY due to model confidence: {confidence:.3f}")
+            # Don't return, allow the trade to proceed with a warning
+        elif signal == "SELL" and rsi < 25:  # Adjusted from 20 to 25
+            logger.info(f"RSI low ({rsi:.1f}), but proceeding with SELL due to model confidence: {confidence:.3f}")
+            # Don't return, allow the trade to proceed with a warning
         
         try:
             if signal == "BUY" and self.balance > price * trade_amount * (1 + fee_rate):
@@ -607,13 +659,26 @@ class ContinuousAutoTrader:
             logger.error(f"Error saving model: {e}")
 
     def load_model(self):
-        """Load the TensorFlow model."""
+        """Load the TensorFlow model or create a new one with correct input shape."""
         try:
+            # First try to load the model
             model = tf.keras.models.load_model(self.model_filename)
-            logger.info("LSTM model loaded successfully")
+            
+            # Check if the loaded model has the correct input shape
+            expected_input_shape = (None, self.sequence_length, 12)
+            if model.input_shape[1:] != expected_input_shape[1:]:
+                logger.warning(f"Model input shape mismatch. Expected {expected_input_shape}, got {model.input_shape}. Creating new model.")
+                model = self.create_lstm_model()
+            else:
+                logger.info("LSTM model loaded successfully with input shape %s", model.input_shape)
+                
             return model
-        except FileNotFoundError:
-            logger.info("No model file found, will create new LSTM")
+            
+        except (FileNotFoundError, OSError) as e:
+            logger.info("No valid model file found, will create new LSTM: %s", str(e))
+            return None
+        except Exception as e:
+            logger.error("Error loading model: %s. Creating new model.", str(e))
             return None
         except Exception as e:
             logger.error(f"Error loading model: {e}")
