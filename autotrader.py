@@ -1,6 +1,7 @@
 import requests
 import signal
 import sys
+import threading
 from datetime import datetime, timedelta
 import tensorflow as tf
 import numpy as np
@@ -642,37 +643,49 @@ class ContinuousAutoTrader:
         for i in range(num_points):
             # Simulate a strong upward trend with increasing momentum
             progress = i / num_points  # 0 to 1
-            # Cubic trend for even stronger upward movement
-            trend = 300 * (progress ** 3)  # More aggressive upward curve
+            
+            # Use a combination of linear and exponential growth for stronger uptrend
+            linear_trend = 500 * progress  # Linear component
+            exp_trend = 200 * (np.exp(progress * 2) - 1)  # Exponential component
+            trend = linear_trend + exp_trend  # Combined trend
             
             # Add some randomness but keep the upward trend
-            noise = np.random.normal(0, 10)  # Reduced noise for cleaner signal
+            noise = np.random.normal(0, last_price * 0.005)  # 0.5% noise relative to price
             
             # Calculate price with trend and noise
             last_price = base_price + trend + noise
             
             # Ensure price stays positive and has some minimum movement
-            last_price = max(100, last_price)  # Don't let price go below 100
+            last_price = max(100, last_price)
             
-            # Ensure price doesn't go too low
-            last_price = max(1000, last_price)
+            # Track price history for indicators
+            if not hasattr(self, '_price_history'):
+                self._price_history = []
+            self._price_history.append(last_price)
+            price_history = np.array(self._price_history)
             
             # Generate timestamp - recent timestamps for test data
             timestamp = (datetime.now() - timedelta(minutes=num_points - i)).isoformat()
             
-            # Calculate technical indicators for the test data
+            # Calculate technical indicators for the test data using actual price history
             # Simple moving averages
-            sma_5 = last_price * (1 + i/num_points * 0.1)  # Increasing with trend
-            sma_10 = last_price * (1 + (i/num_points * 0.1 * 0.9))  # Slightly lagging
-            sma_20 = last_price * (1 + (i/num_points * 0.1 * 0.8))  # More lag
+            sma_5 = np.mean(price_history[-5:]) if len(price_history) >= 5 else last_price
+            sma_10 = np.mean(price_history[-10:]) if len(price_history) >= 10 else last_price
+            sma_20 = np.mean(price_history[-20:]) if len(price_history) >= 20 else last_price
             
             # Exponential moving averages
-            ema_12 = last_price * (1 + (i/num_points * 0.1 * 0.95))
-            ema_26 = last_price * (1 + (i/num_points * 0.1 * 0.85))
+            ema_12 = self.manual_ema(price_history, 12) if len(price_history) >= 12 else last_price
+            ema_26 = self.manual_ema(price_history, 26) if len(price_history) >= 26 else last_price
             
-            # RSI - force into uptrend
-            rsi = 60.0 + (i/num_points * 10)  # 60-70 RSI range
-            rsi = min(rsi, 70.0)  # Cap at 70 to avoid overbought
+            # Calculate RSI using actual price changes
+            if len(price_history) >= 15:  # Need at least 14 periods for RSI
+                rsi = self.manual_rsi(price_history, 14)
+                # Adjust RSI to be in a healthy uptrend range (55-70)
+                if rsi < 55:
+                    rsi = 55 + (i/num_points * 15)  # Gradually increase RSI
+                rsi = min(rsi, 70.0)  # Cap at 70 to avoid overbought
+            else:
+                rsi = 60.0  # Default RSI during warmup
             
             # MACD components
             macd = (ema_12 - ema_26) * 0.2  # Simplified MACD
@@ -878,16 +891,21 @@ class ContinuousAutoTrader:
                 return {"signal": "HOLD", "confidence": 0.5, "price": current_price, "rsi": rsi, "valid": False}
             
             # Adjust prediction based on RSI for extreme conditions
-            if rsi > 80 and prediction > 0.7:  # Overbought
-                prediction = max(0.5, prediction * 0.9)  # Reduce confidence in BUY signal
+            if rsi > 80 and prediction > 0.5:  # Overbought
+                prediction = max(0.4, prediction * 0.8)  # Reduce confidence in BUY signal more aggressively
                 logger.debug(f"Overbought market (RSI: {rsi:.1f}), reducing BUY confidence")
-            elif rsi < 20 and prediction < 0.3:  # Oversold
-                prediction = min(0.5, prediction * 1.1)  # Reduce confidence in SELL signal
-                logger.debug(f"Oversold market (RSI: {rsi:.1f}), reducing SELL confidence")
+            elif rsi < 30 and prediction < 0.5:  # Oversold (changed from 20 to 30 to be more sensitive)
+                prediction = min(0.6, prediction * 1.2)  # Increase confidence in BUY signal for oversold
+                logger.debug(f"Oversold market (RSI: {rsi:.1f}), increasing BUY confidence")
             
-            # Determine signal based on prediction (temporarily lowering BUY threshold for testing)
-            BUY_THRESHOLD = 0.55  # Temporarily lowered from 0.6 for testing
-            SELL_THRESHOLD = 0.4  # Kept at 0.4
+            # Make thresholds symmetric around 0.5 for balanced signals
+            BUY_THRESHOLD = 0.6  # Increased from 0.55 to reduce false positives
+            SELL_THRESHOLD = 0.4  # Kept at 0.4 for now
+            
+            # Adjust thresholds based on RSI to encourage BUY in oversold conditions
+            if rsi < 30:  # Oversold
+                BUY_THRESHOLD = 0.55  # Make it easier to get BUY signals
+                logger.debug(f"Oversold market, lowering BUY threshold to {BUY_THRESHOLD}")
             
             logger.debug(f"Decision thresholds - BUY > {BUY_THRESHOLD}, SELL < {SELL_THRESHOLD}")
             
