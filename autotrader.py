@@ -612,7 +612,7 @@ class ContinuousAutoTrader:
         return pnl, pnl_pct
 
     def _generate_test_data(self, num_points: int) -> None:
-        """Generate test data points for testing purposes."""
+        """Generate test data points for testing purposes with all required fields."""
         if num_points <= 0:
             return
             
@@ -624,19 +624,36 @@ class ContinuousAutoTrader:
             price_change = np.random.normal(0, 100)  # Random walk
             last_price = max(1000.0, last_price + price_change)  # Ensure positive price
             
+            # Generate all required technical indicators with realistic relationships
+            sma_5 = last_price * (1 + np.random.normal(0, 0.005))
+            sma_20 = last_price * (1 + np.random.normal(0, 0.01))
+            ema_12 = last_price * (1 + np.random.normal(0, 0.004))
+            ema_26 = last_price * (1 + np.random.normal(0, 0.008))
+            rsi = np.random.uniform(30, 70)
+            macd = np.random.normal(0, 10)
+            macd_signal = macd * 0.9 + np.random.normal(0, 2)
+            bb_upper = last_price * 1.01 + np.random.normal(0, 50)
+            bb_lower = last_price * 0.99 - np.random.normal(0, 50)
+            
             data_point = {
                 'timestamp': int(time.time()) + i,
-                'price': last_price,
+                'lastPrice': last_price,  # Used by prediction
+                'price': last_price,      # Used by feature preparation
                 'volume': np.random.uniform(1, 10),
                 'bid': last_price * 0.999,
                 'ask': last_price * 1.001,
                 'high24h': last_price * 1.01,
                 'low24h': last_price * 0.99,
-                'sma_5': last_price * (1 + np.random.normal(0, 0.005)),
-                'sma_20': last_price * (1 + np.random.normal(0, 0.01)),
-                'rsi': np.random.uniform(30, 70),
-                'macd': np.random.normal(0, 10),
-                'macd_signal': np.random.normal(0, 10)
+                'sma_5': sma_5,
+                'sma_20': sma_20,
+                'ema_12': ema_12,
+                'ema_26': ema_26,
+                'rsi': rsi,
+                'macd': macd,
+                'macd_signal': macd_signal,
+                'bb_upper': bb_upper,
+                'bb_lower': bb_lower,
+                'spread': (last_price * 1.001) - (last_price * 0.999)  # ask - bid
             }
             
             if not hasattr(self, '_training_data_deque'):
@@ -649,9 +666,12 @@ class ContinuousAutoTrader:
     
     def predict_trade_signal(self, market_data: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Predict trading signal using LSTM model with sequential data."""
+        logger.debug(f"predict_trade_signal called with {len(market_data) if market_data else 0} data points")
+        
         if self.test_mode and len(self.training_data) >= self.min_data_points:
             # In test mode, use the training data for prediction if we don't have enough market data
             if not market_data or len(market_data) < self.min_data_points:
+                logger.debug(f"Using {len(self.training_data)} training data points for prediction in test mode")
                 market_data = self.training_data[-self.min_data_points:]
         
         if not market_data or len(market_data) < self.min_data_points:
@@ -659,22 +679,39 @@ class ContinuousAutoTrader:
             return {"signal": "HOLD", "confidence": 0.5, "price": 0.0, "rsi": 50.0, "valid": False}
 
         try:
+            logger.debug(f"Making prediction with {len(market_data)} data points")
             # Get the latest data point for current price
             current_data = market_data[-1]
-            current_price = float(current_data.get('lastPrice', 0))
             
-            if current_price <= 0:
-                return {"signal": "HOLD", "confidence": 0.5, "price": 0.0, "rsi": 50.0}
+            # Try to get price from either 'lastPrice' or 'price' field
+            current_price = None
+            for price_field in ['lastPrice', 'price']:
+                price = current_data.get(price_field)
+                if price is not None:
+                    try:
+                        current_price = float(price)
+                        if current_price > 0:
+                            break
+                    except (ValueError, TypeError):
+                        continue
+            
+            if current_price is None or current_price <= 0:
+                logger.warning(f"No valid price found in market data. Available keys: {list(current_data.keys())}")
+                return {"signal": "HOLD", "confidence": 0.5, "price": 0.0, "rsi": 50.0, "valid": False}
             
             # Calculate RSI from recent price data
             price_data = []
             for m in market_data:
-                try:
-                    price = float(m.get('lastPrice', 0))
-                    if price > 0:
-                        price_data.append(price)
-                except (ValueError, TypeError):
-                    continue
+                for price_field in ['lastPrice', 'price']:
+                    price = m.get(price_field)
+                    if price is not None:
+                        try:
+                            price_float = float(price)
+                            if price_float > 0:
+                                price_data.append(price_float)
+                                break
+                        except (ValueError, TypeError):
+                            continue
             
             if len(price_data) >= 15:  # Need at least 15 points for 14-period RSI
                 price_array = np.array(price_data[-15:])  # Use last 15 points for 14-period RSI
@@ -691,7 +728,7 @@ class ContinuousAutoTrader:
                     features.append(feature_vector)
             
             if not features:
-                return {"signal": "HOLD", "confidence": 0.5, "price": current_price, "rsi": rsi}
+                return {"signal": "HOLD", "confidence": 0.5, "price": current_price, "rsi": rsi, "valid": False}
             
             features_array = np.array([features])  # Add batch dimension
             
@@ -701,7 +738,7 @@ class ContinuousAutoTrader:
                 confidence = abs(prediction - 0.5) * 2  # Convert to 0-1 range
             except Exception as e:
                 logger.error(f"Error in model prediction: {e}")
-                return {"signal": "HOLD", "confidence": 0.5, "price": current_price, "rsi": rsi}
+                return {"signal": "HOLD", "confidence": 0.5, "price": current_price, "rsi": rsi, "valid": False}
             
             # Adjust prediction based on RSI for extreme conditions
             if rsi > 80 and prediction > 0.7:  # Overbought
@@ -742,7 +779,8 @@ class ContinuousAutoTrader:
                 "signal": signal,
                 "confidence": confidence,
                 "price": current_price,
-                "rsi": rsi
+                "rsi": rsi,
+                "valid": True  # Mark as valid since we successfully generated a prediction
             }
             
         except Exception as e:
@@ -778,8 +816,18 @@ class ContinuousAutoTrader:
         Args:
             prediction: Dictionary containing trade signal, confidence, price, and RSI
         """
-        if not prediction or prediction.get("price", 0) <= 0:
-            logger.warning("Invalid prediction data, no trade executed")
+        logger.debug(f"execute_simulated_trade called with prediction: {prediction}")
+        
+        if not prediction:
+            logger.warning("No prediction data provided, no trade executed")
+            return
+            
+        if prediction.get("price", 0) <= 0:
+            logger.warning(f"Invalid price in prediction: {prediction.get('price')}")
+            return
+            
+        if not prediction.get("valid", False):
+            logger.warning("Prediction marked as invalid, no trade executed")
             return
         
         fee_rate = 0.001  # 0.1% trading fee
@@ -1032,40 +1080,47 @@ class ContinuousAutoTrader:
                 if iteration_count % 10 == 1:
                     logger.info(f"--- Iteration {iteration_count} ---")
                 
-                # Collect and store new market data
-                if not self.collect_and_store_data():
-                    logger.warning("Failed to collect market data")
-                    time.sleep(5)  # Wait before retry
-                    continue
-                    
-                # Fetch new market data (use cached in test mode after first fetch)
-                if not cached_market_data or not self.test_mode:
-                    current_market_data = self.fetch_market_data()
-                    if current_market_data:
-                        cached_market_data = current_market_data
-                    elif cached_market_data:  # Use cached data if available
-                        current_market_data = cached_market_data
+                # In test mode, use existing data if we have enough
+                if self.test_mode:
+                    if len(self.training_data) >= self.min_data_points:
+                        current_market_data = self.training_data[-self.min_data_points:]
                     else:
+                        # Generate more test data if needed
+                        needed = self.min_data_points - len(self.training_data)
+                        self._generate_test_data(needed)
+                        current_market_data = self.training_data[-self.min_data_points:]
+                else:
+                    # In live mode, fetch new market data
+                    current_market_data = self.fetch_market_data()
+                    if not current_market_data and cached_market_data:
+                        logger.warning("Using cached market data")
+                        current_market_data = cached_market_data
+                    elif not current_market_data:
                         logger.warning("No market data available")
                         time.sleep(5)
                         continue
-                else:
-                    current_market_data = cached_market_data
-                # Fetch new market data (use cached in test mode after first fetch)
-                if not cached_market_data or not self.test_mode:
-                    current_market_data = self.fetch_market_data()
-                    if current_market_data:
+                    
+                    # Store the new data point
+                    if self.collect_and_store_data():
                         cached_market_data = current_market_data
-                        # Only store data if we have new market data
-                        if self.collect_and_store_data():
-                            pass  # Data was collected and stored
-                else:
-                    current_market_data = cached_market_data
+                        logger.debug(f"Collected new market data. Total samples: {len(self.training_data)}")
                 
                 # Make trading prediction and execute if we have data
-                if current_market_data:
-                    prediction = self.predict_trade_signal(current_market_data)
+                if len(self.training_data) >= self.min_data_points:
+                    # Use the most recent data points from training data for prediction
+                    prediction_data = self.training_data[-self.min_data_points:]
+                    prediction = self.predict_trade_signal(prediction_data)
+                    
+                    # Log prediction details for debugging
+                    if prediction.get('valid', False):
+                        logger.info(f"Prediction - Signal: {prediction['signal']}, "
+                                    f"Confidence: {prediction['confidence']:.2f}, "
+                                    f"Price: {prediction['price']:.2f}, "
+                                    f"RSI: {prediction['rsi']:.1f}")
+                    
                     self.execute_simulated_trade(prediction)
+                else:
+                    logger.warning(f"Not enough training data for prediction. Have {len(self.training_data)}, need {self.min_data_points}")
                 
                 # Retrain model less frequently in test mode
                 train_interval = 5 if self.test_mode else 60  # Train every 5 iterations in test mode
