@@ -1,3 +1,8 @@
+Youtube video
+
+- qwen2.5-coder:1.5b for autocomplete
+- deepseek r1 for everything else
+
 Reddit thread
 
 - Qwen Coder 14B Q8_0 (32K context)
@@ -6,5 +11,5 @@ Reddit thread
 
 Main website https://docs.continue.dev/customize/model-roles/chat#local-offline-experience
 
-If your local machine can run an 8B parameter model, then we recommend running Llama 3.1 8B on your machine
-If your local machine can run a 16B parameter model, then we recommend running DeepSeek Coder 2 16B
+- If your local machine can run an 8B parameter model, then we recommend running Llama 3.1 8B on your machine
+- If your local machine can run a 16B parameter model, then we recommend running DeepSeek Coder 2 16B
