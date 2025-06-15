@@ -1,4 +1,6 @@
 import requests
+import signal
+import sys
 from datetime import datetime, timedelta
 import tensorflow as tf
 import numpy as np
@@ -56,6 +58,10 @@ logger = logging.getLogger(__name__)
 
 class ContinuousAutoTrader:
     def __init__(self, initial_balance: float = 70.0, limited_run: bool = False, run_iterations: int = 5):
+        # Initialize shutdown flag and event
+        self._shutdown_requested = False
+        self._shutdown_event = threading.Event()
+        
         self.balance = initial_balance
         self.model_filename = "autotrader_model.keras"
         self.training_data_filename = "training_data.json"
@@ -101,6 +107,9 @@ class ContinuousAutoTrader:
         
         # Load scalers if they exist
         self.load_scalers()
+        
+        # Set up signal handlers
+        self._setup_signal_handlers()
         
         logger.info(f"AutoTrader initialized with balance: {self.balance:.2f} AUD")
         logger.info(f"Loaded {len(self.training_data)} historical data points")
@@ -1179,217 +1188,206 @@ class ContinuousAutoTrader:
             return False
         return time.time() - self.last_training_time >= self.training_interval_seconds
         
+    def _setup_signal_handlers(self):
+        """Set up signal handlers for graceful shutdown."""
+        def signal_handler(signum, frame):
+            logger.warning(f"Received signal {signum}, initiating graceful shutdown...")
+            self._shutdown_requested = True
+            self._shutdown_event.set()  # Unblock any waiting operations
+            
+        # Register signal handlers
+        signal.signal(signal.SIGINT, signal_handler)
+        signal.signal(signal.SIGTERM, signal_handler)
+        
+        # Ignore SIGPIPE when writing to closed pipes
+        try:
+            signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+        except AttributeError:
+            # SIGPIPE is not available on Windows
+            pass
+
+    def _shutdown(self):
+        """Perform cleanup operations before shutdown."""
+        logger.info("Starting shutdown sequence...")
+        
+        try:
+            # Save all data and state
+            logger.info("Saving training data...")
+            self.save_training_data()
+            
+            logger.info("Saving model...")
+            self.save_model()
+            
+            logger.info("Saving scalers...")
+            self.save_scalers()
+            
+            logger.info("Saving trader state...")
+            self.save_state()
+            
+            # Close any resources if needed
+            if hasattr(self, 'session') and self.session:
+                try:
+                    self.session.close()
+                except Exception as e:
+                    logger.error(f"Error closing session: {e}")
+            
+            logger.info("Shutdown complete")
+            
+        except Exception as e:
+            logger.error(f"Error during shutdown: {e}", exc_info=True)
+        finally:
+            # Ensure we exit even if there's an error during shutdown
+            sys.exit(0)
+
+    def _should_continue(self, iteration: int) -> bool:
+        """Check if the main loop should continue running."""
+        if self._shutdown_requested:
+            logger.info("Shutdown requested, stopping...")
+            return False
+            
+        if self.limited_run and iteration >= self.run_iterations:
+            logger.info(f"Completed {iteration}/{self.run_iterations} iterations in limited run mode")
+            return False
+            
+        return True
+
     def run_continuous_trading(self):
         """Main loop for continuous LSTM-based trading operation."""
         logger.info(f"Starting {'limited run' if self.limited_run else 'continuous'} trading...")
         
         # Initialize iteration counter for limited run
         if self.limited_run:
-            self._run_iteration = 0
             logger.info(f"Limited run mode: Will run for {self.run_iterations} iterations")
         
         # Main trading loop
-        iteration_count = 0
+        iteration = 0
         last_save_time = time.time()
         last_train_time = 0
         
         try:
-            while True:
-                iteration += 1
-                current_time = time.time()
+            while self._should_continue(iteration):
+                iteration_start = time.time()
                 
                 # Log status periodically
-                if iteration % 10 == 1:  # Every 10th iteration
+                if iteration % 10 == 0:  # Every 10th iteration
                     logger.info(f"--- Iteration {iteration} ---")
                     if self.position_size > 0:
-                        current_price = self.fetch_market_data()[-1]['price'] if self.fetch_market_data() else 0.0
+                        market_data = self.fetch_market_data()
+                        current_price = market_data[-1]['price'] if market_data else 0.0
                         pnl, pnl_pct = self.calculate_position_pnl(current_price)
                         logger.info(f"Current position: {self.position_size:.6f} BTC @ ${self.entry_price:.2f}")
                         logger.info(f"Current P&L: ${pnl:+.2f} ({pnl_pct:+.2f}%)")
                     else:
                         logger.info("No open positions")
                 
-                # Fetch and store new market data
-                market_data = self.fetch_market_data()
-                if not market_data:
-                    logger.warning("Failed to fetch market data, retrying...")
-                    time.sleep(5)
-                    continue
-                
-                # Store the new data point
-                if not self.collect_and_store_data():
-                    logger.warning("Failed to store market data")
-                    time.sleep(1)
-                    continue
-                
-                # Make trading prediction if we have enough data
-                if len(self.training_data) >= self.min_data_points:
-                    prediction = self.predict_trade_signal(market_data)
-                    
-                    # Log prediction details
-                    if prediction.get('valid', False):
-                        logger.info(f"Prediction - Signal: {prediction['signal']}, "
-                                    f"Confidence: {prediction['confidence']:.2f}, "
-                                    f"Price: {prediction['price']:.2f}, "
-                                    f"RSI: {prediction['rsi']:.1f}")
-                    
-                    # Execute trade based on prediction
-                    self.execute_simulated_trade(prediction)
-                
-                # Retrain model periodically
-                if (current_time - last_train_time >= self.training_interval_seconds and 
-                    len(self.training_data) >= self.sequence_length + 20):
-                    logger.info("Retraining LSTM model...")
-                    if self.train_model():
-                        last_train_time = current_time
-                
-                # Save state periodically
-                if current_time - last_save_time >= self.save_interval_seconds:
-                    logger.info("Saving state...")
-                    self.save_training_data()
-                    self.save_model()
-                    self.save_scalers()
-                    self.save_state()
-                    last_save_time = current_time
-                
-                # Sleep to avoid excessive CPU usage
-                time.sleep(1)
-                
-                # Check if we've reached the iteration limit in limited run mode
-                if self.limited_run:
-                    self._run_iteration += 1
-                    if self._run_iteration >= self.run_iterations:
-                        logger.info(f"Completed {self.run_iterations} iterations in limited run mode")
-                        break
-                    
-        except KeyboardInterrupt:
-            logger.info("Received keyboard interrupt, saving state...")
-        except Exception as e:
-            logger.error(f"Error in trading loop: {e}")
-        finally:
-            # Ensure all data is saved before exiting
-            logger.info("Saving final state...")
-            self.save_training_data()
-            self.save_model()
-            self.save_scalers()
-            self.save_state()
-            logger.info("Shutdown complete")
-            
-        # Initialize counters
-        last_save_count = 0
-        iteration_count = 0
-        last_train_count = 0
-        
-        # Initial data collection phase (only in live mode)
-        if not self.limited_run:
-            logger.info("Initial data collection phase...")
-            while len(self.training_data) < self.min_data_points:
-                if self.collect_and_store_data():
-                    logger.info(f"Collected {len(self.training_data)}/{self.min_data_points} initial data points")
-                time.sleep(5)  # Wait between data collection attempts
-            
-            logger.info(f"Initial data collection complete. Starting trading with {len(self.training_data)} data points")
-        
-        # Cache market data to avoid redundant API calls in test mode
-        cached_market_data = None
-        
-        while True:
-            try:
-                iteration_count += 1
-                start_time = time.time()
-                
-                # Only log every 10 iterations to reduce noise
-                if iteration_count % 10 == 1:
-                    logger.info(f"--- Iteration {iteration_count} ---")
-                
-                # Always use real market data, even in limited run mode
-                current_market_data = self.fetch_market_data()
-                if not current_market_data and cached_market_data:
-                    logger.warning("Using cached market data")
-                    current_market_data = cached_market_data
-                elif not current_market_data:
-                    logger.warning("No market data available")
-                    time.sleep(5)
-                    continue
+                try:
+                    # Fetch and store new market data
+                    market_data = self.fetch_market_data()
+                    if not market_data:
+                        logger.warning("Failed to fetch market data, retrying...")
+                        self._shutdown_event.wait(5)  # Wait with interruptible sleep
+                        continue
                     
                     # Store the new data point
-                    if self.collect_and_store_data():
-                        cached_market_data = current_market_data
-                        logger.debug(f"Collected new market data. Total samples: {len(self.training_data)}")
-                
-                # Make trading prediction and execute if we have data
-                if len(self.training_data) >= self.min_data_points:
-                    # Use the most recent data points from training data for prediction
-                    prediction_data = self.training_data[-self.min_data_points:]
-                    prediction = self.predict_trade_signal(prediction_data)
+                    if not self.collect_and_store_data():
+                        logger.warning("Failed to store market data")
+                        self._shutdown_event.wait(1)  # Wait with interruptible sleep
+                        continue
                     
-                    # Log prediction details for debugging
-                    if prediction.get('valid', False):
-                        logger.info(f"Prediction - Signal: {prediction['signal']}, "
-                                    f"Confidence: {prediction['confidence']:.2f}, "
-                                    f"Price: {prediction['price']:.2f}, "
-                                    f"RSI: {prediction['rsi']:.1f}")
+                    # Make trading prediction if we have enough data
+                    if len(self.training_data) >= self.min_data_points:
+                        prediction = self.predict_trade_signal(market_data)
+                        
+                        # Log prediction details
+                        if prediction.get('valid', False):
+                            logger.info(f"Prediction - Signal: {prediction['signal']}, "
+                                      f"Confidence: {prediction['confidence']:.2f}, "
+                                      f"Price: {prediction['price']:.2f}, "
+                                      f"RSI: {prediction['rsi']:.1f}")
+                        
+                        # Execute trade based on prediction
+                        self.execute_simulated_trade(prediction)
                     
-                    self.execute_simulated_trade(prediction)
-                else:
-                    logger.warning(f"Not enough training data for prediction. Have {len(self.training_data)}, need {self.min_data_points}")
+                    current_time = time.time()
+                    
+                    # Retrain model periodically
+                    if (current_time - last_train_time >= self.training_interval_seconds and 
+                        len(self.training_data) >= self.sequence_length + 20 and 
+                        not self._shutdown_requested):
+                        logger.info("Retraining LSTM model...")
+                        if self.train_model():
+                            last_train_time = current_time
+                    
+                    # Save state periodically
+                    if current_time - last_save_time >= self.save_interval_seconds and not self._shutdown_requested:
+                        logger.info("Saving state...")
+                        self.save_training_data()
+                        self.save_model()
+                        self.save_scalers()
+                        self.save_state()
+                        last_save_time = current_time
+                    
+                    # Calculate sleep time to maintain consistent iteration timing
+                    iteration_time = time.time() - iteration_start
+                    sleep_time = max(1.0 - iteration_time, 0.1)  # Target 1 second per iteration, min 0.1s sleep
+                    
+                    # Sleep with interruptible wait
+                    self._shutdown_event.wait(sleep_time)
+                    
+                except Exception as e:
+                    logger.error(f"Error in trading iteration: {e}", exc_info=True)
+                    self._shutdown_event.wait(1)  # Prevent tight loop on errors
                 
-                # Train model periodically (more frequently in limited run mode)
-                train_interval = 5 if self.limited_run else 60  # Train more frequently in limited run mode
-                if iteration_count % train_interval == 0:
-                    logger.info("Retraining LSTM model...")
-                    self.train_model()
+                iteration += 1
                 
-                # Save state periodically (more frequently in limited run mode)
-                save_interval = 10 if self.limited_run else 600  # Save more frequently in limited run mode
-                if iteration_count % save_interval == 0:
-                    logger.info("Saving state...")
-                    self.save_state()
-                    self.save_scalers()
-                    self.save_state()
-                    self.last_save_time = time.time()
-                    last_save_count = iteration_count
-                
-                # Log status periodically
-                if iteration_count % 20 == 0:
-                    avg_rsi = np.mean([dp.get('rsi', 50) for dp in self.training_data[-10:] if 'rsi' in dp]) if len(self.training_data) >= 10 else 50
-                    logger.info(
-                        f"Status - Iteration: {iteration_count}, "
-                        f"Balance: {self.balance:.2f} AUD, "
-                        f"Samples: {len(self.training_data)}, "
-                        f"Avg RSI: {avg_rsi:.1f}"
-                    )
-                
-                # Check if we've reached the iteration limit in limited run mode
-                if self.limited_run:
-                    iteration_count += 1
-                    if iteration_count >= self.run_iterations:
-                        logger.info(f"Completed {self.run_iterations} iterations in limited run mode")
-                        break
-                
-                # Calculate time taken for this iteration
-                iteration_time = time.time() - start_time
-                
-                # Adjust sleep time based on mode (faster in limited run mode)
-                target_interval = 0.5 if self.limited_run else 5.0  # Faster iterations in limited run mode
-                sleep_time = max(0.1, target_interval - iteration_time)
-                time.sleep(sleep_time)
-                
-            except KeyboardInterrupt:
-                logger.info("Received shutdown signal, saving all data...")
-                self.save_training_data()
-                self.save_model()
-                self.save_scalers()
-                self.save_state()
-                logger.info("Shutdown complete")
-                break
-            except Exception as e:
-                logger.error(f"Unexpected error in trading loop: {e}")
-                time.sleep(60)  # Wait before retrying
+                # Check if we should continue running
+                if not self._should_continue(iteration):
+                    break
+                    
+        except KeyboardInterrupt:
+            logger.info("Received keyboard interrupt, initiating graceful shutdown...")
+            self._shutdown_requested = True
+        except Exception as e:
+            logger.error(f"Critical error in trading loop: {e}", exc_info=True)
+            self._shutdown_requested = True
+        finally:
+            # Ensure we clean up properly
+            if self._shutdown_requested:
+                logger.info("Shutdown sequence completed successfully")
+            else:
+                logger.info("Trading loop ended")
+            self._shutdown()
 
+
+def main():
+    import argparse
+    
+    # Set up argument parsing
+    parser = argparse.ArgumentParser(description='AutoTrader Bot - Continuous Cryptocurrency Trading')
+    parser.add_argument('--limited-run', action='store_true', help='Run for a limited number of iterations')
+    parser.add_argument('--iterations', type=int, default=5, help='Number of iterations to run in limited mode')
+    parser.add_argument('--balance', type=float, default=70.0, help='Initial balance in AUD')
+    
+    args = parser.parse_args()
+    
+    try:
+        # Create and run trader
+        trader = ContinuousAutoTrader(
+            initial_balance=args.balance,
+            limited_run=args.limited_run,
+            run_iterations=args.iterations
+        )
+        
+        # Run the main trading loop
+        trader.run_continuous_trading()
+        
+    except KeyboardInterrupt:
+        logger.info("Shutdown requested by user")
+    except Exception as e:
+        logger.critical(f"Fatal error: {e}", exc_info=True)
+        sys.exit(1)
+    finally:
+        logger.info("AutoTrader has stopped")
 
 if __name__ == "__main__":
-    import sys
-    limited_run = '--limited-run' in sys.argv
-    trader = ContinuousAutoTrader(limited_run=limited_run)
-    trader.run_continuous_trading()
+    main()
