@@ -3,14 +3,37 @@ from datetime import datetime
 import tensorflow as tf
 import numpy as np
 import json
-import os
 import time
-import logging
-from typing import List, Dict, Optional, Tuple
 import pickle
-from sklearn.preprocessing import StandardScaler, MinMaxScaler
+import os
+from typing import Dict, List, Optional, Tuple, Any, Union
 from collections import deque
+import logging
+import structlog
+from sklearn.preprocessing import StandardScaler, MinMaxScaler
 import pandas as pd
+
+# Configure structured logging
+structlog.configure(
+    processors=[
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.JSONRenderer()
+    ],
+    context_class=dict,
+    logger_factory=structlog.PrintLoggerFactory()
+)
+logger = structlog.get_logger()
+
+# Constants
+DEFAULT_CONFIG = {
+    "confidence_threshold": 0.1,
+    "rsi_oversold": 30,
+    "rsi_overbought": 70,
+    "trade_amount": 0.001,
+    "fee_rate": 0.001,
+    "max_position_size": 0.1,
+    "risk_per_trade": 0.02
+}
 
 # Try to import talib, with fallback for manual calculations
 try:
@@ -47,6 +70,15 @@ class ContinuousAutoTrader:
         self.test_mode = test_mode
         self.test_iterations = test_iterations
         
+        # Position tracking
+        self.position_size = 0.0  # Current position size in BTC
+        self.entry_price = 0.0  # Average entry price of current position
+        self.position_value = 0.0  # Current value of the position
+        
+        # Risk management parameters
+        self.max_position_size = 0.1  # Maximum position size in BTC
+        self.risk_per_trade = 0.02  # Risk 2% of balance per trade
+        
         # Initialize scalers for adaptive normalization
         self.feature_scaler = StandardScaler()
         self.price_scaler = MinMaxScaler()
@@ -75,14 +107,16 @@ class ContinuousAutoTrader:
 
     def save_state(self):
         """Save the current state of the trader to a file."""
-        state = {
-            'balance': self.balance,
-            'last_save_time': self.last_save_time,
-            'last_training_time': self.last_training_time,
-            'training_data_length': len(self.training_data),
-            'scalers_fitted': self.scalers_fitted
-        }
         try:
+            state = {
+                'balance': self.balance,
+                'position_size': self.position_size,
+                'entry_price': self.entry_price,
+                'position_value': self.position_value,
+                'last_save_time': self.last_save_time,
+                'last_training_time': self.last_training_time,
+                'scalers_fitted': self.scalers_fitted
+            }
             with open(self.state_filename, 'wb') as f:
                 pickle.dump(state, f)
             logger.info("Trader state saved successfully")
@@ -94,11 +128,16 @@ class ContinuousAutoTrader:
         try:
             with open(self.state_filename, 'rb') as f:
                 state = pickle.load(f)
-            self.balance = state.get('balance', 10000.0)
-            self.last_save_time = state.get('last_save_time', 0)
+            self.balance = state.get('balance', self.balance)
+            self.position_size = state.get('position_size', 0.0)
+            self.entry_price = state.get('entry_price', 0.0)
+            self.position_value = state.get('position_value', 0.0)
+            self.last_save_time = state.get('last_save_time', time.time())
             self.last_training_time = state.get('last_training_time', 0)
             self.scalers_fitted = state.get('scalers_fitted', False)
             logger.info(f"Trader state loaded. Balance: {self.balance:.2f} AUD")
+            if self.position_size != 0:
+                logger.info(f"Loaded position: {self.position_size:.6f} BTC at ${self.entry_price:.2f}")
         except FileNotFoundError:
             logger.info("No previous state found. Starting fresh.")
         except Exception as e:
@@ -533,117 +572,291 @@ class ContinuousAutoTrader:
             logger.error(f"Error training LSTM model: {e}")
             return False
 
-    def predict_trade_signal(self, market_data: List[Dict]) -> Dict:
+    def calculate_position_pnl(self, current_price: float) -> Tuple[float, float]:
+        """Calculate current profit/loss for the position."""
+        if self.position_size <= 0 or self.entry_price <= 0:
+            return 0.0, 0.0
+            
+        current_value = self.position_size * current_price
+        cost_basis = self.position_size * self.entry_price
+        pnl = current_value - cost_basis
+        pnl_pct = (pnl / cost_basis) * 100 if cost_basis > 0 else 0
+        return pnl, pnl_pct
+
+    def predict_trade_signal(self, market_data: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Predict trading signal using LSTM model with sequential data."""
+        if not market_data or len(market_data) < self.sequence_length:
+            logger.warning("Not enough market data for prediction")
+            return {"signal": "HOLD", "confidence": 0.5, "price": 0.0, "rsi": 50.0}
+
         try:
-            comprehensive_data = self.extract_comprehensive_data(market_data)
-            if not comprehensive_data or comprehensive_data['price'] <= 0:
-                return {"signal": "HOLD", "confidence": 0.5, "price": 0}
+            # Get the latest data point for current price
+            current_data = market_data[-1]
+            current_price = float(current_data.get('lastPrice', 0))
             
-            # Need enough historical data for sequence
-            if len(self.training_data) < self.sequence_length or not self.scalers_fitted:
-                return {"signal": "HOLD", "confidence": 0.5, "price": comprehensive_data['price']}
+            if current_price <= 0:
+                return {"signal": "HOLD", "confidence": 0.5, "price": 0.0, "rsi": 50.0}
             
-            # Calculate current technical indicators
-            recent_prices = np.array([dp['price'] for dp in self.training_data[-(self.sequence_length-1):]] + [comprehensive_data['price']])
-            recent_volumes = np.array([dp['volume'] for dp in self.training_data[-(self.sequence_length-1):]] + [comprehensive_data['volume']])
-            indicators = self.calculate_technical_indicators(recent_prices, recent_volumes)
+            # Calculate RSI from recent price data
+            price_data = []
+            for m in market_data:
+                try:
+                    price = float(m.get('lastPrice', 0))
+                    if price > 0:
+                        price_data.append(price)
+                except (ValueError, TypeError):
+                    continue
             
-            # Create current data point with indicators
-            current_data = {**comprehensive_data, **indicators}
+            if len(price_data) >= 15:  # Need at least 15 points for 14-period RSI
+                price_array = np.array(price_data[-15:])  # Use last 15 points for 14-period RSI
+                rsi = float(self.manual_rsi(price_array))
+            else:
+                rsi = 50.0  # Neutral RSI if not enough data
             
-            # Prepare sequence for prediction
-            sequence_data = self.training_data[-(self.sequence_length-1):] + [current_data]
-            sequence_features = []
-            
-            for data_point in sequence_data:
+            # Prepare features for the model
+            features = []
+            for i in range(len(market_data) - self.sequence_length, len(market_data)):
+                data_point = market_data[i]
                 feature_vector = self.prepare_features(data_point)
-                sequence_features.append(feature_vector)
+                if feature_vector is not None:
+                    features.append(feature_vector)
             
-            # Scale the sequence
-            sequence_array = np.array(sequence_features)
-            scaled_sequence = self.feature_scaler.transform(sequence_array)
+            if not features:
+                return {"signal": "HOLD", "confidence": 0.5, "price": current_price, "rsi": rsi}
             
-            # Reshape for LSTM prediction
-            prediction_input = scaled_sequence.reshape(1, self.sequence_length, 12)
-            
-            # Debug: Print input shape and model input shape
-            logger.debug(f"Prediction input shape: {prediction_input.shape}")
-            logger.debug(f"Model input shape: {self.model.input_shape}")
+            features_array = np.array([features])  # Add batch dimension
             
             # Make prediction
             try:
-                prediction = self.model.predict(prediction_input, verbose=0)[0][0]
-                logger.debug(f"Prediction successful: {prediction}")
+                prediction = float(self.model.predict(features_array, verbose=0)[0][0])
+                confidence = abs(prediction - 0.5) * 2  # Convert to 0-1 range
             except Exception as e:
-                logger.error(f"Prediction failed: {e}")
-                return {"signal": "HOLD", "confidence": 0.5, "price": comprehensive_data['price']}
+                logger.error(f"Error in model prediction: {e}")
+                return {"signal": "HOLD", "confidence": 0.5, "price": current_price, "rsi": rsi}
             
-            # Convert to trading signal with more conservative thresholds
-            if prediction > 0.65:
+            # Adjust prediction based on RSI for extreme conditions
+            if rsi > 80 and prediction > 0.7:  # Overbought
+                prediction = max(0.5, prediction * 0.9)  # Reduce confidence in BUY signal
+                logger.debug(f"Overbought market (RSI: {rsi:.1f}), reducing BUY confidence")
+            elif rsi < 20 and prediction < 0.3:  # Oversold
+                prediction = min(0.5, prediction * 1.1)  # Reduce confidence in SELL signal
+                logger.debug(f"Oversold market (RSI: {rsi:.1f}), reducing SELL confidence")
+            
+            # Determine signal based on prediction
+            if prediction > 0.6:  # More confident threshold for BUY
                 signal = "BUY"
-            elif prediction < 0.35:
+            elif prediction < 0.4:  # More confident threshold for SELL
                 signal = "SELL"
             else:
                 signal = "HOLD"
             
+            # Check if we already have a position and modify signal accordingly
+            if self.position_size > 0:
+                try:
+                    _, pnl_pct = self.calculate_position_pnl(current_price)
+                    if signal == "BUY":  # Don't buy if we already have a position
+                        signal = "HOLD"
+                        logger.debug("Already in position, converting BUY to HOLD")
+                    elif signal == "SELL" and pnl_pct < -5:  # Add stop loss check
+                        logger.info(f"Stop loss triggered at {pnl_pct:.1f}% loss")
+                    elif signal == "SELL" and pnl_pct > 10:  # Take profit at 10%
+                        logger.info(f"Take profit triggered at {pnl_pct:.1f}% gain")
+                except Exception as e:
+                    logger.error(f"Error calculating position P&L: {e}")
+            
+            logger.debug(
+                f"Prediction: {prediction:.3f}, Signal: {signal}, "
+                f"Confidence: {confidence:.3f}, RSI: {rsi:.1f}"
+            )
+            
             return {
                 "signal": signal,
-                "confidence": float(prediction),
-                "price": comprehensive_data['price'],
-                "rsi": indicators.get('rsi', 50),
-                "macd": indicators.get('macd', 0)
+                "confidence": confidence,
+                "price": current_price,
+                "rsi": rsi
             }
             
         except Exception as e:
             logger.error(f"Error making LSTM prediction: {e}")
-            return {"signal": "HOLD", "confidence": 0.5, "price": 0}
+            return {"signal": "HOLD", "confidence": 0.5, "price": 0, "rsi": 50.0}
 
-    def execute_simulated_trade(self, prediction: Dict):
-        """Execute simulated trades based on LSTM predictions."""
-        if not prediction or prediction["price"] == 0:
+    def calculate_position_size(self, price: float, stop_loss_price: float = None) -> float:
+        """Calculate position size based on risk management rules."""
+        if stop_loss_price is None:
+            stop_loss_pct = 0.02  # Default 2% stop loss if not specified
+        else:
+            stop_loss_pct = abs(price - stop_loss_price) / price
+            
+        if stop_loss_pct == 0:
+            stop_loss_pct = 0.02  # Prevent division by zero
+            
+        risk_amount = self.balance * self.risk_per_trade
+        position_size = risk_amount / (stop_loss_pct * price)
+        
+        # Cap position size to max allowed
+        position_size = min(position_size, self.max_position_size)
+        
+        # Ensure we don't try to buy more than we can afford
+        max_affordable = (self.balance * 0.99) / price  # Leave 1% buffer for fees
+        position_size = min(position_size, max_affordable)
+        
+        return position_size
+
+    def execute_simulated_trade(self, prediction: Dict[str, Any]) -> None:
+        """
+        Execute simulated trades based on LSTM predictions with enhanced position management.
+        
+        Args:
+            prediction: Dictionary containing trade signal, confidence, price, and RSI
+        """
+        if not prediction or prediction.get("price", 0) <= 0:
             logger.warning("Invalid prediction data, no trade executed")
             return
         
-        trade_amount = 0.01  # BTC
-        fee_rate = 0.001  # 0.1%
-        price = prediction["price"]
+        fee_rate = 0.001  # 0.1% trading fee
+        price = float(prediction["price"])
         signal = prediction["signal"]
-        confidence = prediction["confidence"]
-        rsi = prediction.get("rsi", 50)
+        confidence = float(prediction["confidence"])
+        rsi = float(prediction.get("rsi", 50))
         
-        # More sophisticated trading logic
-        # Slightly lower confidence threshold to allow more trades
-        if abs(confidence - 0.5) < 0.1:  # Reduced from 0.15 to 0.1 to allow more trades
-            logger.info(f"Confidence too neutral ({confidence:.3f}), holding position")
+        # Log current position status
+        if self.position_size > 0:
+            pnl, pnl_pct = self.calculate_position_pnl(price)
+            logger.info(
+                f"Position: {self.position_size:.6f} BTC @ ${self.entry_price:.2f} | "
+                f"Current: ${price:.2f} | P&L: ${pnl:.2f} ({pnl_pct:.2f}%)"
+            )
+        
+        # Skip if confidence is too low
+        min_confidence = 0.55  # Require at least 55% confidence to trade
+        if confidence < min_confidence:
+            logger.info(f"Confidence too low ({confidence:.3f} < {min_confidence:.2f}), holding position")
             return
         
-        # Adjusted RSI thresholds to allow more trades while still managing risk
-        if signal == "BUY" and rsi > 75:  # Slightly more aggressive than 80
-            logger.info(f"RSI high ({rsi:.1f}), but proceeding with BUY due to model confidence: {confidence:.3f}")
-            # Don't return, allow the trade to proceed with a warning
-        elif signal == "SELL" and rsi < 25:  # Adjusted from 20 to 25
-            logger.info(f"RSI low ({rsi:.1f}), but proceeding with SELL due to model confidence: {confidence:.3f}")
-            # Don't return, allow the trade to proceed with a warning
+        # Adjust signal based on RSI for better risk management
+        rsi_overbought = 75
+        rsi_oversold = 25
+        
+        if signal == "BUY" and rsi > rsi_overbought:
+            logger.info(f"RSI high ({rsi:.1f} > {rsi_overbought}), avoiding BUY despite model confidence: {confidence:.3f}")
+            signal = "HOLD"
+        elif signal == "SELL" and rsi < rsi_oversold:
+            logger.info(f"RSI low ({rsi:.1f} < {rsi_oversold}), avoiding SELL despite model confidence: {confidence:.3f}")
+            signal = "HOLD"
         
         try:
-            if signal == "BUY" and self.balance > price * trade_amount * (1 + fee_rate):
-                cost = price * trade_amount * (1 + fee_rate)
-                self.balance -= cost
-                logger.info(f"BUY executed: {trade_amount} BTC at {price:.2f} AUD (Cost: {cost:.2f}, Confidence: {confidence:.3f}, RSI: {rsi:.1f})")
+            # Handle BUY signal
+            if signal == "BUY" and self.position_size <= 0:  # Only buy if we don't already have a position
+                # Calculate position size with 2% stop loss
+                stop_loss_pct = 0.02
+                stop_loss_price = price * (1 - stop_loss_pct)
+                position_size = self.calculate_position_size(price, stop_loss_price)
+                
+                # Minimum trade size check
+                min_trade_size = 0.0001  # Minimum 0.0001 BTC
+                if position_size < min_trade_size:
+                    logger.info(f"Position size too small: {position_size:.6f} BTC, minimum is {min_trade_size} BTC")
+                    return
+                
+                # Calculate fees and total cost
+                trade_value = price * position_size
+                fee = trade_value * fee_rate
+                total_cost = trade_value + fee
+                
+                if self.balance >= total_cost:
+                    # Execute BUY order
+                    self.balance -= total_cost
+                    self.position_size = position_size
+                    self.entry_price = price
+                    self.position_value = trade_value
+                    
+                    logger.info(
+                        f"✅ BUY executed: {position_size:.6f} BTC @ ${price:.2f} | "
+                        f"Cost: ${total_cost:.2f} (Fee: ${fee:.2f}) | "
+                        f"RSI: {rsi:.1f} | Confidence: {confidence:.3f}"
+                    )
+                    logger.info(f"💰 New position: {self.position_size:.6f} BTC @ ${self.entry_price:.2f} | Balance: ${self.balance:.2f}")
+                    logger.info(f"Available balance: ${self.balance:.2f}")
+                else:
+                    logger.warning(
+                        f"Insufficient balance for BUY. Needed: ${total_cost:.2f}, "
+                        f"Available: ${self.balance:.2f}"
+                    )
+                    
+            # Handle SELL signal
+            elif signal == "SELL" and self.position_size > 0:  # Only sell if we have a position
+                # Calculate position P&L
+                pnl, pnl_pct = self.calculate_position_pnl(price)
+                
+                # Calculate trade value and fees
+                trade_value = price * self.position_size
+                fee = trade_value * fee_rate
+                proceeds = trade_value - fee
+                
+                # Update balance and reset position
+                self.balance += proceeds
+                position_size = self.position_size  # Store for logging before reset
+                self.position_size = 0.0
+                self.position_value = 0.0
+                
+                # Determine if this was a profitable trade
+                trade_result = "✅ PROFIT" if pnl >= 0 else "❌ LOSS"
+                
+                logger.info(
+                    f"🔄 {trade_result} SELL executed: {position_size:.6f} BTC @ ${price:.2f} | "
+                    f"P&L: ${pnl:+.2f} ({pnl_pct:+.2f}%) | "
+                    f"Fee: ${fee:.2f} | "
+                    f"RSI: {rsi:.1f} | Confidence: {confidence:.3f}"
+                )
+                logger.info(f"💰 New balance: ${self.balance:.2f}")
+                
+                # Reset entry price after selling
+                self.entry_price = 0.0
+                
+            # Handle HOLD signal or no action needed
+            elif signal == "HOLD":
+                if self.position_size > 0:
+                    current_value = self.position_size * price
+                    profit_loss = current_value - (self.entry_price * self.position_size)
+                    profit_loss_pct = (profit_loss / (self.entry_price * self.position_size)) * 100 if self.entry_price > 0 else 0
+                    
+                    # Check for stop loss or take profit
+                    if profit_loss_pct <= -5:  # 5% stop loss
+                        logger.warning(f"⚠️  STOP LOSS triggered at {profit_loss_pct:.2f}% loss"
+                                    f" (Entry: ${self.entry_price:.2f}, Current: ${price:.2f})")
+                        signal = "SELL"  # Trigger sell on next iteration
+                    elif profit_loss_pct >= 10:  # 10% take profit
+                        logger.warning(f"🎯 TAKE PROFIT triggered at {profit_loss_pct:.2f}% profit"
+                                    f" (Entry: ${self.entry_price:.2f}, Current: ${price:.2f})")
+                        signal = "SELL"  # Trigger sell on next iteration
+                    else:
+                        logger.info(
+                            f"📊 HOLDING - Position: {self.position_size:.6f} BTC @ ${self.entry_price:.2f} | "
+                            f"Current: ${price:.2f} | "
+                            f"P&L: ${profit_loss:+.2f} ({profit_loss_pct:+.2f}%) | "
+                            f"RSI: {rsi:.1f}"
+                        )
+                else:
+                    logger.info(f"⏸️  HOLD - No position. Price: ${price:.2f}, RSI: {rsi:.1f}")
             
-            elif signal == "SELL":
-                revenue = price * trade_amount * (1 - fee_rate)
-                self.balance += revenue
-                logger.info(f"SELL executed: {trade_amount} BTC at {price:.2f} AUD (Revenue: {revenue:.2f}, Confidence: {confidence:.3f}, RSI: {rsi:.1f})")
+            # Log current account status
+            logger.info(
+                f"💵 Account Summary | "
+                f"Balance: ${self.balance:.2f} | "
+                f"Position: {self.position_size:.6f} BTC | "
+                f"Total Value: ${self.balance + (self.position_size * price):.2f}"
+            )
             
-            else:
-                logger.info(f"HOLD - Price: {price:.2f} AUD, Confidence: {confidence:.3f}, RSI: {rsi:.1f}")
-            
-            logger.info(f"Current balance: {self.balance:.2f} AUD")
+            # Save state after each trade
+            self.save_state()
             
         except Exception as e:
-            logger.error(f"Error executing trade: {e}")
+            logger.error(f"❌ Error executing trade: {e}")
+            # Try to save state even if there was an error
+            try:
+                self.save_state()
+            except Exception as save_error:
+                logger.error(f"❌ Failed to save state after error: {save_error}")
 
     def save_training_data(self):
         """Save training data to JSON file."""
