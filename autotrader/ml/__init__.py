@@ -5,12 +5,27 @@ Contains neural networks, continuous learning algorithms,
 and model management functionality.
 """
 
-from .continuous_learner import ContinuousLearner
-from .model_manager import ModelManager
-from .feature_engineer import FeatureEngineer
+from .continuous_learner import ContinuousLearner, LearningConfig
+from .model_manager import ModelManager, ModelMetadata
+from .feature_engineer import FeatureEngineer, FeatureConfig
+from .neural_network import NeuralNetworkArchitecture, ModelConfig, ModelType, LossType, OptimizerType
+from .indicators import TechnicalIndicators
+from .models import LSTMModel
+from .training import ContinuousLearner as TrainingContinuousLearner
 
 __all__ = [
     "ContinuousLearner",
-    "ModelManager", 
-    "FeatureEngineer"
+    "LearningConfig",
+    "ModelManager",
+    "ModelMetadata", 
+    "FeatureEngineer",
+    "FeatureConfig",
+    "NeuralNetworkArchitecture",
+    "ModelConfig",
+    "ModelType",
+    "LossType", 
+    "OptimizerType",
+    "TechnicalIndicators",
+    "LSTMModel",
+    "TrainingContinuousLearner"
 ]
