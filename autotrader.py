@@ -133,26 +133,35 @@ class ContinuousAutoTrader:
             logger.error(f"Error loading scalers: {e}")
 
     def fetch_market_data(self) -> Optional[List[Dict]]:
-        """Fetch live market data with better error handling."""
-        base_url = 'https://api.btcmarkets.net/v3'
-        endpoint = '/markets/tickers?marketId=BTC-AUD'
-        url = f"{base_url}{endpoint}"
+        """
+        Fetch live market data with better error handling and performance optimizations.
+        Uses session reuse and faster timeouts for better performance.
+        """
+        if not hasattr(self, '_session'):
+            self._session = requests.Session()
+            self._session.headers.update({
+                'User-Agent': 'AutoTrader/1.0',
+                'Accept': 'application/json'
+            })
         
-        max_retries = 3
+        url = 'https://api.btcmarkets.net/v3/markets/tickers?marketId=BTC-AUD'
+        
+        max_retries = 2  # Reduced from 3 to 2 for faster failure
         for attempt in range(max_retries):
             try:
-                response = requests.get(url, timeout=10)
-                response.raise_for_status()
-                data = response.json()
-                logger.debug("Market data fetched successfully")
-                return data
-            except requests.exceptions.RequestException as e:
-                logger.warning(f"Attempt {attempt + 1}/{max_retries} failed: {e}")
-                if attempt < max_retries - 1:
-                    time.sleep(2 ** attempt)  # Exponential backoff
-                else:
-                    logger.error(f"Failed to fetch market data after {max_retries} attempts")
+                # Use a faster timeout for the request (5s instead of 10s)
+                with self._session.get(url, timeout=(3.0, 5.0)) as response:
+                    response.raise_for_status()
+                    data = response.json()
+                    if not data or not isinstance(data, list):
+                        raise ValueError("Invalid response format")
+                    return data
+            except (requests.exceptions.RequestException, ValueError) as e:
+                if attempt == max_retries - 1:  # Last attempt
+                    logger.warning(f"Failed to fetch market data after {max_retries} attempts: {e}")
                     return None
+                # Short delay before retry (reduced from exponential backoff)
+                time.sleep(0.5 * (attempt + 1))
 
     def extract_comprehensive_data(self, data: List[Dict]) -> Optional[Dict]:
         """Extract comprehensive market data including OHLCV."""
@@ -297,51 +306,60 @@ class ContinuousAutoTrader:
             logger.error(f"Error calculating technical indicators: {e}", exc_info=True)
             return default_indicators
 
-    def collect_and_store_data(self):
-        """Collect current market data and add to training dataset."""
+    def collect_and_store_data(self) -> bool:
+        """
+        Collect current market data and add to training dataset.
+        Optimized for performance by reducing unnecessary calculations.
+        """
         try:
             market_data = self.fetch_market_data()
-            if market_data:
-                comprehensive_data = self.extract_comprehensive_data(market_data)
-                if comprehensive_data and comprehensive_data['price'] > 0:
-                    # Calculate technical indicators if we have enough historical data
-                    indicators = {}
-                    if len(self.training_data) >= 20:
-                        try:
-                            # Filter only valid dictionary entries and extract prices/volumes
-                            valid_data = [dp for dp in self.training_data[-20:] if isinstance(dp, dict) and 'price' in dp and 'volume' in dp]
-                            if len(valid_data) >= 20:
-                                recent_prices = np.array([dp['price'] for dp in valid_data])
-                                recent_volumes = np.array([dp['volume'] for dp in valid_data])
-                                indicators = self.calculate_technical_indicators(recent_prices, recent_volumes)
-                        except Exception as e:
-                            logger.warning(f"Error calculating technical indicators: {e}")
-                            indicators = {}
+            if not market_data:
+                return False
+                
+            comprehensive_data = self.extract_comprehensive_data(market_data)
+            if not comprehensive_data or comprehensive_data.get('price', 0) <= 0:
+                return False
+            
+            # Only calculate indicators if we have enough data
+            indicators = {}
+            if len(self.training_data) >= 20:
+                try:
+                    # Use most recent data points for indicators
+                    recent_data = self.training_data[-20:]
+                    recent_prices = np.array([dp['price'] for dp in recent_data if 'price' in dp])
+                    recent_volumes = np.array([dp['volume'] for dp in recent_data if 'volume' in dp])
                     
-                    # Store comprehensive data point with timestamp
-                    data_point = {
-                        'timestamp': datetime.now().isoformat(),
-                        'price': comprehensive_data['price'],
-                        'volume': comprehensive_data['volume'],
-                        'bid': comprehensive_data['bid'],
-                        'ask': comprehensive_data['ask'],
-                        'high24h': comprehensive_data['high24h'],
-                        'low24h': comprehensive_data['low24h'],
-                        'spread': comprehensive_data['ask'] - comprehensive_data['bid'],
-                        **indicators
-                    }
-                    
-                    self.training_data.append(data_point)
-                    
-                    # Limit training data size to prevent memory issues
-                    if len(self.training_data) > self.max_training_samples:
-                        self.training_data = self.training_data[-self.max_training_samples:]
-                    
-                    logger.debug(f"Data collected: Price {comprehensive_data['price']:.2f} AUD, RSI {indicators.get('rsi', 0):.1f}")
-                    return True
+                    if len(recent_prices) >= 20 and len(recent_volumes) >= 20:
+                        indicators = self.calculate_technical_indicators(
+                            recent_prices, 
+                            recent_volumes
+                        )
+                except Exception as e:
+                    logger.warning(f"Error calculating technical indicators: {e}")
+            
+            # Create and store data point
+            data_point = {
+                'timestamp': int(time.time()),
+                **comprehensive_data,
+                **indicators
+            }
+            
+            # Add to training data (using deque for O(1) append/pop from both ends)
+            if not hasattr(self, '_training_data_deque'):
+                self._training_data_deque = deque(self.training_data, maxlen=self.max_training_samples)
+            
+            self._training_data_deque.append(data_point)
+            self.training_data = list(self._training_data_deque)
+            
+            # Fit scalers on first run or if not fitted yet
+            if not self.scalers_fitted and len(self.training_data) >= 20:
+                self.fit_scalers(self.training_data)
+            
+            return True
+            
         except Exception as e:
-            logger.error(f"Error collecting data: {e}")
-        return False
+            logger.error(f"Error in collect_and_store_data: {e}", exc_info=True)
+            return False
 
     def create_lstm_model(self):
         """Create a new LSTM model for sequential data."""
@@ -700,42 +718,66 @@ class ContinuousAutoTrader:
             logger.info("Starting continuous LSTM trading operation...")
         
         iteration_count = 0
+        last_train_count = 0
+        last_save_count = 0
+        
+        # Cache market data to avoid redundant API calls in test mode
+        cached_market_data = None
+        
         while True:
             try:
                 iteration_count += 1
-                logger.info(f"--- Iteration {iteration_count} ---")
+                start_time = time.time()
                 
-                # Collect new market data
-                if self.collect_and_store_data():
-                    # Get current market data for prediction
+                # Only log every 10 iterations to reduce noise
+                if iteration_count % 10 == 1:
+                    logger.info(f"--- Iteration {iteration_count} ---")
+                
+                # Fetch new market data (use cached in test mode after first fetch)
+                if not cached_market_data or not self.test_mode:
                     current_market_data = self.fetch_market_data()
                     if current_market_data:
-                        # Make trading prediction using LSTM
-                        prediction = self.predict_trade_signal(current_market_data)
-                        
-                        # Execute trade based on prediction
-                        self.execute_simulated_trade(prediction)
+                        cached_market_data = current_market_data
+                        # Only store data if we have new market data
+                        if self.collect_and_store_data():
+                            pass  # Data was collected and stored
+                else:
+                    current_market_data = cached_market_data
                 
-                # Retrain LSTM model if enough time has passed and we have sufficient data
-                if (self.should_train() and 
+                # Make trading prediction and execute if we have data
+                if current_market_data:
+                    prediction = self.predict_trade_signal(current_market_data)
+                    self.execute_simulated_trade(prediction)
+                
+                # Retrain model less frequently in test mode
+                train_interval = 5 if self.test_mode else 60  # Train every 5 iterations in test mode
+                if (iteration_count - last_train_count >= train_interval and 
                     len(self.training_data) >= self.sequence_length + 20):
                     logger.info("Retraining LSTM model with new sequential data...")
                     if self.train_model():
                         self.last_training_time = time.time()
+                        last_train_count = iteration_count
                 
-                # Save everything periodically
-                if self.should_save():
+                # Save less frequently in test mode
+                save_interval = 10 if self.test_mode else 600  # Save every 10 iterations in test mode
+                if iteration_count - last_save_count >= save_interval:
                     logger.info("Saving data, model, and scalers...")
                     self.save_training_data()
                     self.save_model()
                     self.save_scalers()
                     self.save_state()
                     self.last_save_time = time.time()
+                    last_save_count = iteration_count
                 
-                # Log status every 10 iterations
-                if iteration_count % 10 == 0:
+                # Log status periodically
+                if iteration_count % 20 == 0:
                     avg_rsi = np.mean([dp.get('rsi', 50) for dp in self.training_data[-10:] if 'rsi' in dp]) if len(self.training_data) >= 10 else 50
-                    logger.info(f"Status: Balance={self.balance:.2f} AUD, Training samples={len(self.training_data)}, Avg RSI={avg_rsi:.1f}")
+                    logger.info(
+                        f"Status - Iteration: {iteration_count}, "
+                        f"Balance: {self.balance:.2f} AUD, "
+                        f"Samples: {len(self.training_data)}, "
+                        f"Avg RSI: {avg_rsi:.1f}"
+                    )
                 
                 # Check if we should exit in test mode
                 if self.test_mode and iteration_count >= self.test_iterations:
@@ -748,8 +790,12 @@ class ContinuousAutoTrader:
                     self.save_state()
                     break
                 
-                # Sleep before next iteration
-                sleep_time = 5 if self.test_mode else 60  # Shorter sleep in test mode
+                # Calculate time taken for this iteration
+                iteration_time = time.time() - start_time
+                
+                # Adjust sleep time based on iteration time
+                target_interval = 0.5 if self.test_mode else 5.0  # Aim for 2 iterations per second in test mode
+                sleep_time = max(0.1, target_interval - iteration_time)
                 time.sleep(sleep_time)
                 
             except KeyboardInterrupt:
