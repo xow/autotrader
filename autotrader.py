@@ -65,6 +65,7 @@ class ContinuousAutoTrader:
         self.training_interval_seconds = 600  # Retrain every 10 minutes
         self.max_training_samples = 2000  # Increased for more data
         self.sequence_length = 20  # Number of time steps for LSTM
+        self.min_data_points = 50  # Minimum data points before attempting predictions
         
         # Test mode settings
         self.test_mode = test_mode
@@ -353,10 +354,18 @@ class ContinuousAutoTrader:
         try:
             market_data = self.fetch_market_data()
             if not market_data:
+                logger.warning("No market data received from API")
                 return False
                 
             comprehensive_data = self.extract_comprehensive_data(market_data)
             if not comprehensive_data or comprehensive_data.get('price', 0) <= 0:
+                logger.warning(f"Invalid comprehensive data: {comprehensive_data}")
+                return False
+                
+            # Ensure we have all required fields
+            required_fields = ['price', 'volume', 'bid', 'ask', 'high24h', 'low24h']
+            if not all(field in comprehensive_data for field in required_fields):
+                logger.warning(f"Missing required fields in market data: {comprehensive_data}")
                 return False
             
             # Only calculate indicators if we have enough data
@@ -391,8 +400,15 @@ class ContinuousAutoTrader:
             self.training_data = list(self._training_data_deque)
             
             # Fit scalers on first run or if not fitted yet
-            if not self.scalers_fitted and len(self.training_data) >= 20:
-                self.fit_scalers(self.training_data)
+            if len(self.training_data) >= self.min_data_points:
+                if not self.scalers_fitted:
+                    logger.info("Fitting scalers for the first time")
+                    if not self.fit_scalers(self.training_data):
+                        logger.error("Failed to fit scalers")
+                        return False
+                # Ensure feature buffer is populated for predictions
+                if not self.feature_buffer:
+                    self._update_feature_buffer()
             
             return True
             
@@ -441,13 +457,25 @@ class ContinuousAutoTrader:
             data_point.get('bb_lower', 0)
         ])
 
-    def fit_scalers(self, training_data: List[Dict]):
+    def _update_feature_buffer(self) -> None:
+        """Update the feature buffer with the most recent data points."""
+        if len(self.training_data) >= self.sequence_length:
+            # Get the most recent sequence of data points
+            recent_data = self.training_data[-self.sequence_length:]
+            self.feature_buffer.clear()
+            for data_point in recent_data:
+                feature_vector = self.prepare_features(data_point)
+                if feature_vector is not None:
+                    self.feature_buffer.append(feature_vector)
+            logger.debug(f"Updated feature buffer with {len(self.feature_buffer)} data points")
+            
+    def fit_scalers(self, training_data: List[Dict]) -> bool:
         """Fit scalers to the training data."""
         # Filter only valid dictionary entries
-        valid_data = [dp for dp in training_data if isinstance(dp, dict) and 'price' in dp]
+        valid_data = [dp for dp in training_data if isinstance(dp, dict) and 'price' in dp and dp['price'] > 0]
         
-        if len(valid_data) < 50:
-            logger.warning(f"Not enough valid data to fit scalers properly ({len(valid_data)} valid entries)")
+        if len(valid_data) < self.min_data_points:
+            logger.warning(f"Not enough valid data to fit scalers properly (have {len(valid_data)}, need {self.min_data_points})")
             return False
         
         try:
@@ -583,11 +611,52 @@ class ContinuousAutoTrader:
         pnl_pct = (pnl / cost_basis) * 100 if cost_basis > 0 else 0
         return pnl, pnl_pct
 
+    def _generate_test_data(self, num_points: int) -> None:
+        """Generate test data points for testing purposes."""
+        if num_points <= 0:
+            return
+            
+        logger.info(f"Generating {num_points} test data points...")
+        last_price = 50000.0  # Starting price
+        
+        for i in range(num_points):
+            # Simulate some price movement
+            price_change = np.random.normal(0, 100)  # Random walk
+            last_price = max(1000.0, last_price + price_change)  # Ensure positive price
+            
+            data_point = {
+                'timestamp': int(time.time()) + i,
+                'price': last_price,
+                'volume': np.random.uniform(1, 10),
+                'bid': last_price * 0.999,
+                'ask': last_price * 1.001,
+                'high24h': last_price * 1.01,
+                'low24h': last_price * 0.99,
+                'sma_5': last_price * (1 + np.random.normal(0, 0.005)),
+                'sma_20': last_price * (1 + np.random.normal(0, 0.01)),
+                'rsi': np.random.uniform(30, 70),
+                'macd': np.random.normal(0, 10),
+                'macd_signal': np.random.normal(0, 10)
+            }
+            
+            if not hasattr(self, '_training_data_deque'):
+                self._training_data_deque = deque(maxlen=self.max_training_samples)
+                
+            self._training_data_deque.append(data_point)
+            
+        self.training_data = list(self._training_data_deque)
+        logger.info(f"Generated {num_points} test data points. Total data points: {len(self.training_data)}")
+    
     def predict_trade_signal(self, market_data: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Predict trading signal using LSTM model with sequential data."""
-        if not market_data or len(market_data) < self.sequence_length:
-            logger.warning("Not enough market data for prediction")
-            return {"signal": "HOLD", "confidence": 0.5, "price": 0.0, "rsi": 50.0}
+        if self.test_mode and len(self.training_data) >= self.min_data_points:
+            # In test mode, use the training data for prediction if we don't have enough market data
+            if not market_data or len(market_data) < self.min_data_points:
+                market_data = self.training_data[-self.min_data_points:]
+        
+        if not market_data or len(market_data) < self.min_data_points:
+            logger.warning(f"Not enough market data for prediction. Have {len(market_data) if market_data else 0}, need {self.min_data_points}")
+            return {"signal": "HOLD", "confidence": 0.5, "price": 0.0, "rsi": 50.0, "valid": False}
 
         try:
             # Get the latest data point for current price
@@ -927,12 +996,29 @@ class ContinuousAutoTrader:
         """Main loop for continuous LSTM-based trading operation."""
         if self.test_mode:
             logger.info(f"Starting test mode with {self.test_iterations} iterations...")
+            # In test mode, use existing data if we have enough
+            if len(self.training_data) >= self.min_data_points:
+                logger.info(f"Using existing {len(self.training_data)} data points for testing")
+            else:
+                # Generate test data if not enough
+                self._generate_test_data(self.min_data_points - len(self.training_data))
+                logger.info(f"Generated {len(self.training_data)} test data points")
         else:
             logger.info("Starting continuous LSTM trading operation...")
         
         iteration_count = 0
         last_train_count = 0
         last_save_count = 0
+        
+        # Initial data collection phase (only in live mode)
+        if not self.test_mode:
+            logger.info("Initial data collection phase...")
+            while len(self.training_data) < self.min_data_points:
+                if self.collect_and_store_data():
+                    logger.info(f"Collected {len(self.training_data)}/{self.min_data_points} initial data points")
+                time.sleep(5)  # Wait between data collection attempts
+            
+            logger.info(f"Initial data collection complete. Starting trading with {len(self.training_data)} data points")
         
         # Cache market data to avoid redundant API calls in test mode
         cached_market_data = None
@@ -946,6 +1032,25 @@ class ContinuousAutoTrader:
                 if iteration_count % 10 == 1:
                     logger.info(f"--- Iteration {iteration_count} ---")
                 
+                # Collect and store new market data
+                if not self.collect_and_store_data():
+                    logger.warning("Failed to collect market data")
+                    time.sleep(5)  # Wait before retry
+                    continue
+                    
+                # Fetch new market data (use cached in test mode after first fetch)
+                if not cached_market_data or not self.test_mode:
+                    current_market_data = self.fetch_market_data()
+                    if current_market_data:
+                        cached_market_data = current_market_data
+                    elif cached_market_data:  # Use cached data if available
+                        current_market_data = cached_market_data
+                    else:
+                        logger.warning("No market data available")
+                        time.sleep(5)
+                        continue
+                else:
+                    current_market_data = cached_market_data
                 # Fetch new market data (use cached in test mode after first fetch)
                 if not cached_market_data or not self.test_mode:
                     current_market_data = self.fetch_market_data()
