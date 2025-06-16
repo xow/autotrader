@@ -70,7 +70,14 @@ class ContinuousAutoTrader:
         self.state_filename = "trader_state.pkl"
         self.save_interval_seconds = 1800  # Save every 30 minutes
         self.training_interval_seconds = 600  # Retrain every 10 minutes
-        self.max_training_samples = 2000  # Increased for more data
+        # Training configuration
+        self.max_training_samples = 10000  # Increased to ~2 weeks of 1-min data
+        self.training_interval_seconds = 600  # Retrain every 10 minutes
+        self.save_interval_seconds = 1800  # Save every 30 minutes
+        self.evaluation_interval = 12  # Evaluate model every 12 training cycles (~2 hours)
+        self.patience = 3  # Stop training if no improvement for 3 evaluations
+        self.best_val_loss = float('inf')
+        self.epochs_without_improvement = 0
         self.sequence_length = 20  # Number of time steps for LSTM
         self.min_data_points = 50  # Minimum data points before attempting predictions
         
@@ -581,34 +588,99 @@ class ContinuousAutoTrader:
             return None, None
 
     def train_model(self):
-        """Train the LSTM model with accumulated sequential data."""
+        """Train the LSTM model with accumulated sequential data and early stopping."""
         try:
             sequences, labels = self.prepare_lstm_training_data()
-            if sequences is None or len(sequences) < 20:
-                logger.warning("Not enough sequential data for LSTM training")
+            if sequences is None or len(sequences) < 100:  # Increased minimum samples
+                logger.warning(f"Not enough sequential data for LSTM training: {len(sequences) if sequences else 0} samples")
                 return False
+            
+            # Calculate class weights for imbalanced data
+            class_counts = np.bincount(labels.astype(int))
+            total = len(labels)
+            class_weights = {i: total / (2 * count) for i, count in enumerate(class_counts) if count > 0}
+            
+            # Set up callbacks
+            callbacks = [
+                tf.keras.callbacks.EarlyStopping(
+                    monitor='val_loss',
+                    patience=5,
+                    restore_best_weights=True,
+                    verbose=1
+                ),
+                tf.keras.callbacks.ReduceLROnPlateau(
+                    monitor='val_loss',
+                    factor=0.5,
+                    patience=3,
+                    min_lr=1e-6
+                )
+            ]
             
             # Train the model
             history = self.model.fit(
                 sequences, labels,
-                epochs=10,
-                batch_size=16,
+                epochs=30,  # Increased max epochs
+                batch_size=32,  # Increased batch size
                 validation_split=0.2,
+                class_weight=class_weights,
+                callbacks=callbacks,
                 verbose=0,
-                shuffle=False  # Don't shuffle time series data
+                shuffle=False  # Important for time series data
             )
             
+            # Log training results
             loss = history.history['loss'][-1]
             accuracy = history.history.get('accuracy', [0])[-1]
             val_loss = history.history.get('val_loss', [loss])[-1]
             val_accuracy = history.history.get('val_accuracy', [accuracy])[-1]
             
-            logger.info(f"LSTM trained - Loss: {loss:.4f}, Acc: {accuracy:.4f}, Val_Loss: {val_loss:.4f}, Val_Acc: {val_accuracy:.4f}")
+            logger.info(f"LSTM trained - Epochs: {len(history.epoch)}")
+            logger.info(f"Training - Loss: {loss:.4f}, Acc: {accuracy:.4f}")
+            logger.info(f"Validation - Loss: {val_loss:.4f}, Acc: {val_accuracy:.4f}")
+            
+            # Track model performance
+            self._log_model_performance(val_loss, val_accuracy)
+            
             return True
             
         except Exception as e:
-            logger.error(f"Error training LSTM model: {e}")
+            logger.error(f"Error training LSTM model: {e}", exc_info=True)
             return False
+            
+    def _log_model_performance(self, val_loss: float, val_accuracy: float) -> None:
+        """Track and log model performance metrics."""
+        # Log to console
+        logger.info(f"Model Performance - Val Loss: {val_loss:.6f}, Val Acc: {val_accuracy:.4f}")
+        
+        # Log to file for long-term tracking
+        log_entry = {
+            'timestamp': datetime.now().isoformat(),
+            'val_loss': float(val_loss),
+            'val_accuracy': float(val_accuracy),
+            'training_samples': len(self.training_data)
+        }
+        
+        try:
+            # Append to performance log file
+            log_file = 'model_performance.jsonl'
+            with open(log_file, 'a') as f:
+                f.write(json.dumps(log_entry) + '\n')
+                
+            # Check for early stopping
+            if val_loss < self.best_val_loss:
+                self.best_val_loss = val_loss
+                self.epochs_without_improvement = 0
+                logger.info("New best model found!")
+                # Save the best model
+                self.model.save('best_model.keras')
+            else:
+                self.epochs_without_improvement += 1
+                
+            if self.epochs_without_improvement >= self.patience:
+                logger.warning(f"Early stopping triggered after {self.epochs_without_improvement} evaluations without improvement")
+                
+        except Exception as e:
+            logger.error(f"Error logging model performance: {e}")
 
     def calculate_position_pnl(self, current_price: float) -> Tuple[float, float]:
         """Calculate current profit/loss for the position."""
@@ -756,24 +828,33 @@ class ContinuousAutoTrader:
                 self._test_signal_counter = 0
             
             self._test_signal_counter += 1
-            if self._test_signal_counter % 5 == 0:
-                # Toggle between BUY and SELL
-                if not hasattr(self, '_last_test_signal') or self._last_test_signal == 'SELL':
+            
+            # Only generate signals every 3rd iteration to avoid too many trades
+            if self._test_signal_counter % 3 == 0:
+                # Get current position size
+                has_position = self.position_size > 0.0
+                
+                # If we have a position, consider SELL, otherwise only BUY
+                if has_position:
+                    # 70% chance to SELL if we have a position
+                    if not hasattr(self, '_last_test_signal') or self._last_test_signal == 'BUY':
+                        self._last_test_signal = 'SELL'
+                        return {
+                            'signal': 'SELL',
+                            'confidence': 0.85,  # Slightly less than perfect confidence
+                            'price': 50250.0,    # Small 0.5% profit
+                            'rsi': 65.0,         # Approaching overbought
+                            'valid': True
+                        }
+            
+                # 30% chance to BUY if we don't have a position
+                if not has_position or (hasattr(self, '_last_test_signal') and self._last_test_signal == 'SELL'):
                     self._last_test_signal = 'BUY'
                     return {
                         'signal': 'BUY',
-                        'confidence': 0.9,
-                        'price': 50000.0,
-                        'rsi': 30.0,
-                        'valid': True
-                    }
-                else:
-                    self._last_test_signal = 'SELL'
-                    return {
-                        'signal': 'SELL',
-                        'confidence': 0.9,
-                        'price': 51000.0,  # Higher price for profit
-                        'rsi': 70.0,
+                        'confidence': 0.82,   # Reasonable confidence
+                        'price': 50000.0,     # Base price
+                        'rsi': 35.0,          # Neutral to slightly oversold
                         'valid': True
                     }
         
@@ -1004,12 +1085,15 @@ class ContinuousAutoTrader:
         rsi = float(prediction.get("rsi", 50))
         
         # Log current position status
+        logger.debug(f"[POSITION DEBUG] Current position - Size: {self.position_size}, Entry Price: {self.entry_price}")
         if self.position_size > 0:
             pnl, pnl_pct = self.calculate_position_pnl(price)
             logger.info(
                 f"Position: {self.position_size:.6f} BTC @ ${self.entry_price:.2f} | "
                 f"Current: ${price:.2f} | P&L: ${pnl:.2f} ({pnl_pct:.2f}%)"
             )
+        else:
+            logger.debug("[POSITION DEBUG] No open position")
         
         # Skip if confidence is too low
         min_confidence = 0.55  # Require at least 55% confidence to trade
@@ -1030,7 +1114,13 @@ class ContinuousAutoTrader:
         
         try:
             # Handle BUY signal
-            if signal == "BUY" and self.position_size <= 0:  # Only buy if we don't already have a position
+            if signal == "BUY":
+                logger.debug(f"[BUY DEBUG] BUY signal received. Current position size: {self.position_size}")
+                if self.position_size > 0:
+                    logger.info("Already in a position, skipping BUY")
+                    return
+                    
+                logger.debug("[BUY DEBUG] Proceeding with BUY execution")
                 # Calculate position size with 2% stop loss
                 stop_loss_pct = 0.02
                 stop_loss_price = price * (1 - stop_loss_pct)
@@ -1068,7 +1158,14 @@ class ContinuousAutoTrader:
                     )
                     
             # Handle SELL signal
-            elif signal == "SELL" and self.position_size > 0:  # Only sell if we have a position
+            elif signal == "SELL":
+                logger.debug(f"[SELL DEBUG] SELL signal received. Position size: {self.position_size}")
+                if self.position_size <= 0:
+                    logger.warning("⚠️  SELL signal received but no open position to sell")
+                    return
+                    
+                # Only sell if we have a position
+                logger.debug("[SELL DEBUG] Proceeding with SELL execution")
                 # Calculate position P&L
                 pnl, pnl_pct = self.calculate_position_pnl(price)
                 
@@ -1270,51 +1367,121 @@ class ContinuousAutoTrader:
         return True
 
     def run_continuous_trading(self):
-        """Main loop for continuous LSTM-based trading operation."""
+        """Main loop for continuous trading."""
         logger.info(f"Starting {'limited run' if self.limited_run else 'continuous'} trading...")
         
-        # Initialize iteration counter for limited run
         if self.limited_run:
             logger.info(f"Limited run mode: Will run for {self.run_iterations} iterations")
         
-        # Main trading loop
         iteration = 0
+        training_cycle = 0
+        last_train_time = time.time()
         last_save_time = time.time()
-        last_train_time = 0
         
         try:
-            while self._should_continue(iteration):
+            while not self._shutdown_requested and (not self.limited_run or iteration < self.run_iterations):
                 iteration_start = time.time()
+                logger.info(f"--- Iteration {iteration} ---")
                 
-                # Log status periodically
-                if iteration % 10 == 0:  # Every 10th iteration
-                    logger.info(f"--- Iteration {iteration} ---")
-                    if self.position_size > 0:
-                        market_data = self.fetch_market_data()
-                        current_price = market_data[-1]['price'] if market_data else 0.0
-                        pnl, pnl_pct = self.calculate_position_pnl(current_price)
-                        logger.info(f"Current position: {self.position_size:.6f} BTC @ ${self.entry_price:.2f}")
-                        logger.info(f"Current P&L: ${pnl:+.2f} ({pnl_pct:+.2f}%)")
-                    else:
-                        logger.info("No open positions")
+                # Log current position
+                if self.position_size > 0:
+                    pnl, pnl_pct = self.calculate_position_pnl(0)  # Will be updated with actual price
+                    logger.info(f"Current position: {self.position_size:.6f} BTC @ ${self.entry_price:.2f}")
+                    logger.info(f"Current P&L: ${pnl:+.2f} ({pnl_pct:+.2f}%)")
+                else:
+                    logger.info("No open positions")
                 
                 try:
-                    # Fetch and store new market data
-                    market_data = self.fetch_market_data()
-                    if not market_data:
-                        logger.warning("Failed to fetch market data, retrying...")
-                        self._shutdown_event.wait(5)  # Wait with interruptible sleep
+                    # Fetch and validate market data
+                    try:
+                        market_data = self.fetch_market_data()
+                        
+                        # Basic validation
+                        if not market_data or not isinstance(market_data, list):
+                            logger.warning("Invalid market data format")
+                            self._shutdown_event.wait(5)
+                            continue
+                            
+                        # Check if we have enough data for prediction
+                        if len(market_data) < self.min_data_points:
+                            # In limited run mode, use training data if available
+                            if self.limited_run and len(self.training_data) >= self.min_data_points:
+                                logger.debug("Using training data for prediction in limited run mode")
+                                market_data = self.training_data[-self.min_data_points:]
+                            else:
+                                logger.warning(f"Insufficient market data: {len(market_data)} < {self.min_data_points}")
+                                self._shutdown_event.wait(5)
+                                continue
+                        
+                        # Validate price data
+                        current_price = None
+                        for price_field in ['lastPrice', 'price']:
+                            price = market_data[-1].get(price_field)
+                            if price is not None:
+                                try:
+                                    current_price = float(price)
+                                    if current_price > 0:
+                                        break
+                                except (ValueError, TypeError):
+                                    continue
+                        
+                        if current_price is None or current_price <= 0:
+                            logger.warning(f"No valid price found in market data")
+                            self._shutdown_event.wait(5)
+                            continue
+                            
+                    except Exception as e:
+                        logger.error(f"Error fetching/validating market data: {e}", exc_info=True)
+                        self._shutdown_event.wait(5)
                         continue
                     
                     # Store the new data point
                     if not self.collect_and_store_data():
                         logger.warning("Failed to store market data")
-                        self._shutdown_event.wait(1)  # Wait with interruptible sleep
+                        self._shutdown_event.wait(1)
                         continue
                     
-                    # Make trading prediction if we have enough data
-                    if len(self.training_data) >= self.min_data_points:
+                    # Make trading prediction and execute trade
+                    try:
+                        # Get prediction
                         prediction = self.predict_trade_signal(market_data)
+                        
+                        # Validate prediction
+                        if not prediction or not isinstance(prediction, dict):
+                            logger.warning("Invalid prediction format, skipping trade")
+                            continue
+                            
+                        # Check if prediction is valid
+                        if not prediction.get('valid', False):
+                            logger.warning(f"Invalid prediction: {prediction.get('reason', 'No reason provided')}")
+                            continue
+                            
+                        # Ensure required fields exist
+                        required_fields = ['signal', 'confidence', 'price', 'rsi']
+                        if not all(field in prediction for field in required_fields):
+                            logger.warning(f"Missing required prediction fields: {required_fields}")
+                            continue
+                            
+                        # Log prediction details
+                        signal = prediction.get('signal', 'HOLD')
+                        confidence = prediction.get('confidence', 0.5)
+                        price = prediction.get('price', 0)
+                        rsi = prediction.get('rsi', 50.0)
+                        
+                        logger.info(
+                            f"Prediction - Signal: {signal}, "
+                            f"Confidence: {confidence:.2f}, "
+                            f"Price: {price:.2f}, "
+                            f"RSI: {rsi:.1f}"
+                        )
+                        
+                        # Execute trade based on prediction
+                        self.execute_simulated_trade(prediction)
+                        
+                    except Exception as e:
+                        logger.error(f"Error in prediction or trade execution: {str(e)}", exc_info=True)
+                        self._shutdown_event.wait(1)
+                        continue
                         
                         # Log prediction details
                         if prediction.get('valid', False):
