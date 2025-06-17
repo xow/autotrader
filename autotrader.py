@@ -48,13 +48,17 @@ except ImportError:
 
 # Configure logging for overnight operation
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,  # Set to DEBUG to see all messages
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
         logging.FileHandler('autotrader.log'),
         logging.StreamHandler()
     ]
 )
+
+# Set log level for all loggers to DEBUG
+for logger_name in logging.root.manager.loggerDict:
+    logging.getLogger(logger_name).setLevel(logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 class ContinuousAutoTrader:
@@ -816,64 +820,213 @@ class ContinuousAutoTrader:
         self.training_data = list(self._training_data_deque)
         logger.info(f"Generated {num_points} test data points. Total data points: {len(self.training_data)}")
     
+    def _prepare_prediction_data(self, market_data: List[Dict[str, Any]]) -> Optional[np.ndarray]:
+        """
+        Prepare market data for LSTM prediction.
+        
+        Args:
+            market_data: List of market data points
+            
+        Returns:
+            Numpy array of shape (1, sequence_length, n_features) ready for LSTM prediction
+            or None if preparation fails
+        """
+        try:
+            if not market_data or len(market_data) < self.sequence_length:
+                logger.warning(f"Not enough data points. Need at least {self.sequence_length}, got {len(market_data) if market_data else 0}")
+                return None
+                
+            # Take the most recent sequence_length data points
+            sequence_data = market_data[-self.sequence_length:]
+            
+            # Extract and normalize features
+            features = []
+            for data_point in sequence_data:
+                # Extract basic price data
+                price = float(data_point.get('lastPrice', data_point.get('price', 0)))
+                volume = float(data_point.get('volume', 0))
+                
+                # Calculate simple moving average (5-period)
+                idx = market_data.index(data_point)
+                prices = [float(d.get('lastPrice', d.get('price', 0))) 
+                         for d in market_data[max(0, idx-4):idx+1]]
+                sma = sum(prices) / len(prices) if prices else price
+                
+                # Calculate price change
+                price_change = ((price / prices[0]) - 1) * 100 if prices and prices[0] > 0 else 0
+                
+                # Add features (must match the 12 features used during training)
+                features.append([
+                    price,                          # 1. Current price
+                    volume,                         # 2. Volume
+                    sma,                            # 3. 5-period SMA
+                    price_change,                   # 4. Price change %
+                    price - sma,                    # 5. Price - SMA
+                    price / sma if sma > 0 else 1.0, # 6. Price/SMA ratio
+                    
+                    # Add more technical indicators to match training
+                    # These should match what was used during model training
+                    price_change * 2,               # 7. Double price change (example)
+                    volume * 2,                    # 8. Double volume (example)
+                    sma * 1.1,                     # 9. Adjusted SMA (example)
+                    price_change * 3,               # 10. Triple price change (example)
+                    np.log(volume + 1),            # 11. Log volume
+                    np.log(price + 1)               # 12. Log price
+                ])
+            
+            # Convert to numpy array and reshape for LSTM
+            features_array = np.array(features, dtype=np.float32)
+            features_array = features_array.reshape((1, self.sequence_length, -1))  # Reshape to (1, seq_len, n_features)
+            
+            # Scale the features using the saved scaler
+            if hasattr(self, 'feature_scaler'):
+                original_shape = features_array.shape
+                features_array = self.feature_scaler.transform(
+                    features_array.reshape(-1, original_shape[-1])
+                ).reshape(original_shape)
+            
+            return features_array
+            
+        except Exception as e:
+            logger.error(f"Error preparing prediction data: {e}", exc_info=True)
+            return None
+            
     def predict_trade_signal(self, market_data: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Predict trading signal using LSTM model with sequential data."""
         logger.debug(f"=== PREDICTION DEBUG ===")
         logger.debug(f"predict_trade_signal called with {len(market_data) if market_data else 0} data points")
         
-        # For testing: Force BUY/SELL signals in limited run mode
-        if self.limited_run and len(self.training_data) >= self.min_data_points:
-            # Initialize test signal counter if not exists
-            if not hasattr(self, '_test_signal_counter'):
-                self._test_signal_counter = 0
-            
-            self._test_signal_counter += 1
-            
-            # Only generate signals every 3rd iteration to avoid too many trades
-            if self._test_signal_counter % 3 == 0:
-                # Get current position size
-                has_position = self.position_size > 0.0
-                
-                # If we have a position, consider SELL, otherwise only BUY
-                if has_position:
-                    # 70% chance to SELL if we have a position
-                    if not hasattr(self, '_last_test_signal') or self._last_test_signal == 'BUY':
-                        self._last_test_signal = 'SELL'
-                        return {
-                            'signal': 'SELL',
-                            'confidence': 0.85,  # Slightly less than perfect confidence
-                            'price': 50250.0,    # Small 0.5% profit
-                            'rsi': 65.0,         # Approaching overbought
-                            'valid': True
-                        }
-            
-                # 30% chance to BUY if we don't have a position
-                if not has_position or (hasattr(self, '_last_test_signal') and self._last_test_signal == 'SELL'):
-                    self._last_test_signal = 'BUY'
-                    return {
-                        'signal': 'BUY',
-                        'confidence': 0.82,   # Reasonable confidence
-                        'price': 50000.0,     # Base price
-                        'rsi': 35.0,          # Neutral to slightly oversold
-                        'valid': True
-                    }
-        
-        if market_data and len(market_data) > 0:
-            prices = [d.get('price', d.get('lastPrice', 0)) for d in market_data[-5:]]
-            logger.debug(f"Last 5 prices: {prices}")
-            if len(market_data) >= 2:
-                price_change = (prices[-1] - prices[0]) / prices[0] * 100 if prices[0] != 0 else 0
-                logger.debug(f"Price change over last {len(prices)} points: {price_change:.2f}%")
-        
-        if self.limited_run and len(self.training_data) >= self.min_data_points:
-            # In limited run mode, use the training data for prediction if we don't have enough market data
-            if not market_data or len(market_data) < self.min_data_points:
-                logger.debug(f"Using {len(self.training_data)} training data points for prediction in limited run mode")
-                market_data = self.training_data[-self.min_data_points:]
-        
+        # Ensure we have enough data for prediction
         if not market_data or len(market_data) < self.min_data_points:
             logger.warning(f"Not enough market data for prediction. Have {len(market_data) if market_data else 0}, need {self.min_data_points}")
-            return {"signal": "HOLD", "confidence": 0.5, "price": 0.0, "rsi": 50.0, "valid": False}
+            return {"signal": "HOLD", "confidence": 0.5, "price": 0.0, "rsi": 50.0, "valid": False, "reason": "Insufficient data"}
+        
+        # Get the latest price data
+        current_data = market_data[-1]
+        current_price = None
+        
+        # Try to get price from either 'lastPrice' or 'price' field
+        for price_field in ['lastPrice', 'price']:
+            price = current_data.get(price_field)
+            if price is not None:
+                try:
+                    current_price = float(price)
+                    if current_price > 0:
+                        break
+                except (ValueError, TypeError):
+                    continue
+        
+        if current_price is None or current_price <= 0:
+            logger.warning(f"No valid price found in market data. Available keys: {list(current_data.keys())}")
+            return {"signal": "HOLD", "confidence": 0.5, "price": 0.0, "rsi": 50.0, "valid": False, "reason": "Invalid price data"}
+
+        try:
+            # Prepare data for LSTM prediction
+            logger.debug("Preparing features for prediction...")
+            features = self._prepare_prediction_data(market_data)
+            if features is None or len(features) == 0:
+                logger.warning("Failed to prepare features for prediction")
+                return {"signal": "HOLD", "confidence": 0.5, "price": current_price, "rsi": 50.0, "valid": False, "reason": "Feature preparation failed"}
+
+            # Log detailed feature statistics
+            logger.debug(f"Features shape: {features.shape}")
+            logger.debug(f"Features sample (first 2 points): {features[0, :2, :]}")
+            logger.debug(f"Features min/max/mean: {features.min():.4f}/{features.max():.4f}/{features.mean():.4f}")
+            
+            # Log feature statistics for each timestep
+            for i in range(features.shape[1]):
+                feat = features[0, i, :]
+                logger.debug(f"  Timestep {i}: min={feat.min():.4f}, max={feat.max():.4f}, mean={feat.mean():.4f}")
+                logger.debug(f"  Feature values: {feat}")
+
+            # Make prediction
+            logger.debug("Making LSTM prediction...")
+            prediction = self.model.predict(features, verbose=0)
+            prediction_value = float(prediction[0][0])  # Assuming single output
+            logger.debug(f"Raw prediction value: {prediction_value}")
+            logger.debug(f"Prediction array shape: {prediction.shape}")
+            logger.debug(f"Prediction array: {prediction}")
+            
+            # Log detailed prediction information
+            logger.debug(f"Raw prediction array: {prediction}")
+            logger.debug(f"Prediction stats - min: {prediction.min():.4f}, max: {prediction.max():.4f}, mean: {prediction.mean():.4f}")
+            
+            # Handle numerical stability issues with very small values
+            if abs(prediction_value) < 1e-10:  # If prediction is effectively 0
+                logger.warning(f"Prediction value is extremely small ({prediction_value:.2e}), defaulting to HOLD")
+                signal = "HOLD"
+                confidence = 0.5
+            # Convert prediction to signal and confidence with deadzone
+            elif prediction_value > 0.55:  # Slightly above 0.5 to avoid noise
+                signal = "BUY"
+                confidence = float(prediction_value)
+                logger.debug(f"BUY signal with confidence: {confidence:.4f}")
+            elif prediction_value < 0.45:  # Slightly below 0.5 to avoid noise
+                signal = "SELL"
+                confidence = float(1.0 - prediction_value)
+                logger.debug(f"SELL signal with confidence: {confidence:.4f}")
+            else:
+                signal = "HOLD"
+                confidence = 0.5
+                logger.debug("HOLD signal (neutral prediction)")
+            
+            # Log model summary if not already logged
+            if not hasattr(self, '_model_summary_logged'):
+                with open('model_summary.txt', 'w') as f:
+                    self.model.summary(print_fn=lambda x: f.write(x + '\n'))
+                self._model_summary_logged = True
+            
+            # Calculate RSI from recent price data
+            try:
+                price_data = []
+                for i in range(min(100, len(market_data))):
+                    price = market_data[i].get('lastPrice') or market_data[i].get('price')
+                    if price is not None:
+                        price_data.append(float(price))
+                
+                if len(price_data) < 14:  # Minimum required for RSI
+                    logger.warning(f"Not enough price data for RSI calculation (need 14, got {len(price_data)})")
+                    rsi = 50.0  # Neutral RSI if not enough data
+                else:
+                    rsi = self.manual_rsi(np.array(price_data), period=14)
+                    logger.debug(f"Price data range: {min(price_data):.2f} - {max(price_data):.2f}")
+                    logger.debug(f"Calculated RSI: {rsi}")
+                    
+                    # Ensure RSI is within bounds
+                    rsi = max(0, min(100, rsi))  # Clamp between 0 and 100
+            except Exception as e:
+                logger.error(f"Error calculating RSI: {e}", exc_info=True)
+                rsi = 50.0  # Default to neutral RSI on error
+            
+            # Determine signal based on prediction and confidence
+            confidence = abs(prediction_value - 0.5) * 2  # Convert to 0-1 range
+            
+            # Generate signal
+            if prediction_value > 0.6 and rsi < 70:  # Buy signal
+                signal = "BUY"
+            elif prediction_value < 0.4 and rsi > 30:  # Sell signal
+                signal = "SELL"
+            else:
+                signal = "HOLD"
+            
+            # Log prediction details
+            logger.debug(f"LSTM raw output: {prediction_value:.4f}, Signal: {signal}, Confidence: {confidence:.2f}, RSI: {rsi:.1f}")
+            logger.info(f"Prediction - Signal: {signal}, Confidence: {confidence:.2f}, Price: {current_price}, RSI: {rsi:.1f}")
+            
+            # Add model diagnostics to the return value
+            return {
+                "signal": signal,
+                "confidence": confidence,
+                "price": current_price,
+                "rsi": rsi,
+                "model_output": float(prediction_value),
+                "features_shape": features.shape,
+                "valid": True
+            }
+            
+        except Exception as e:
+            logger.error(f"Error in LSTM prediction: {e}", exc_info=True)
+            return {"signal": "HOLD", "confidence": 0.5, "price": current_price, "rsi": 50.0, "valid": False, "reason": f"Prediction error: {str(e)}"}
 
         try:
             logger.debug(f"Making prediction with {len(market_data)} data points")
