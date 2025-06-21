@@ -13,6 +13,7 @@ import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from autotrader import ContinuousAutoTrader
+from autotrader.utils.exceptions import APIError, DataError, NetworkError, NetworkTimeoutError
 
 
 class TestAPIIntegration:
@@ -28,9 +29,14 @@ class TestAPIIntegration:
             
             isolated_trader.fetch_market_data()
             
-            # Verify the URL was called correctly
-            expected_url = "https://api.btcmarkets.net/v3/markets/tickers?marketId=BTC-AUD"
-            mock_get.assert_called_once_with(expected_url, timeout=10)
+            # Verify the URL and params were called correctly
+            expected_url = "https://api.btcmarkets.net/v3/markets/tickers"
+            expected_params = {"marketId": "BTC-AUD"}
+            mock_get.assert_called_once_with(
+                expected_url,
+                params=expected_params,
+                timeout=10
+            )
     
     def test_api_response_handling_success(self, isolated_trader):
         """Test successful API response handling."""
@@ -60,48 +66,65 @@ class TestAPIIntegration:
     
     def test_api_timeout_handling(self, isolated_trader):
         """Test API timeout handling."""
-        with patch("requests.get") as mock_get:
+        with patch("requests.get") as mock_get, \
+             pytest.raises(NetworkTimeoutError) as exc_info:
             mock_get.side_effect = requests.exceptions.Timeout("Request timeout")
             
-            result = isolated_trader.fetch_market_data()
+            isolated_trader.fetch_market_data()
             
-            assert result is None
-            # Should retry 3 times
-            assert mock_get.call_count == 3
+        # Verify the error message
+        assert "Market data request timed out" in str(exc_info.value)
+        # Should only try once since we're raising NetworkTimeoutError on first timeout
+        assert mock_get.call_count == 1
     
     def test_api_connection_error_handling(self, isolated_trader):
         """Test API connection error handling."""
-        with patch("requests.get") as mock_get:
+        with patch("requests.get") as mock_get, \
+             pytest.raises(NetworkError) as exc_info:
             mock_get.side_effect = requests.exceptions.ConnectionError("Connection failed")
             
-            result = isolated_trader.fetch_market_data()
+            isolated_trader.fetch_market_data()
             
-            assert result is None
-            assert mock_get.call_count == 3  # Should retry 3 times
+        # Verify the error message
+        assert "Failed to connect to the exchange" in str(exc_info.value)
+        # Should only try once since we're raising NetworkError on first connection error
+        assert mock_get.call_count == 1
     
     def test_api_http_error_handling(self, isolated_trader):
         """Test API HTTP error handling."""
-        with patch("requests.get") as mock_get:
+        with patch("requests.get") as mock_get, \
+             pytest.raises(APIError) as exc_info:
             mock_response = Mock()
-            mock_response.raise_for_status.side_effect = requests.exceptions.HTTPError("404 Not Found")
+            mock_response.status_code = 404
+            mock_response.text = "Not Found"
+            mock_response.raise_for_status.side_effect = requests.exceptions.HTTPError("404 Not Found", response=mock_response)
             mock_get.return_value = mock_response
             
-            result = isolated_trader.fetch_market_data()
+            isolated_trader.fetch_market_data()
             
-            assert result is None
-            assert mock_get.call_count == 3  # Should retry 3 times
+        # Verify the error details
+        assert exc_info.value.status_code == 404
+        assert "404" in str(exc_info.value)
+        # Should only try once since we're raising APIError on first HTTP error
+        assert mock_get.call_count == 1
     
     def test_api_invalid_json_handling(self, isolated_trader):
         """Test handling of invalid JSON responses."""
-        with patch("requests.get") as mock_get:
+        with patch("requests.get") as mock_get, \
+             pytest.raises(DataError) as exc_info:
             mock_response = Mock()
             mock_response.json.side_effect = json.JSONDecodeError("Invalid JSON", "", 0)
             mock_response.raise_for_status.return_value = None
+            mock_response.text = "{invalid json}"
             mock_get.return_value = mock_response
             
-            result = isolated_trader.fetch_market_data()
+            isolated_trader.fetch_market_data()
             
-            assert result is None
+        # Verify the error details
+        assert "Invalid JSON response" in str(exc_info.value)
+        assert exc_info.value.data_type == "market_data"
+        assert "json_decode_error" in str(exc_info.value.validation_errors)
+        assert mock_get.call_count == 1  # Should only try once since we're raising DataError
     
     def test_api_exponential_backoff(self, isolated_trader):
         """Test exponential backoff between retries."""

@@ -161,11 +161,14 @@ def isolated_trader(temp_dir, test_config):
     # Import after changing directory to avoid file conflicts
     from autotrader import ContinuousAutoTrader
     
-    trader = ContinuousAutoTrader(initial_balance=test_config["initial_balance"])
-    trader.save_interval_seconds = test_config["save_interval_seconds"]
-    trader.training_interval_seconds = test_config["training_interval_seconds"]
-    trader.max_training_samples = test_config["max_training_samples"]
-    trader.sequence_length = test_config["sequence_length"]
+    # Create trader with test configuration
+    trader = ContinuousAutoTrader(
+        initial_balance=test_config["initial_balance"],
+        save_interval_seconds=test_config["save_interval_seconds"],
+        training_interval_seconds=test_config["training_interval_seconds"],
+        max_training_samples=test_config["max_training_samples"],
+        sequence_length=test_config["sequence_length"]
+    )
     
     yield trader
     

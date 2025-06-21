@@ -367,6 +367,16 @@ class ContinuousAutoTrader:
             logger.error(f"Error calculating technical indicators: {e}", exc_info=True)
             return default_indicators
 
+    def should_save(self) -> bool:
+        """Check if it's time to save data and model."""
+        return time.time() - self.last_save_time >= self.save_interval_seconds
+
+    def should_train(self) -> bool:
+        """Check if it's time to retrain the model."""
+        if not self.training_data or len(self.training_data) < self.sequence_length + 20:
+            return False
+        return time.time() - self.last_training_time >= self.training_interval_seconds
+
     def collect_and_store_data(self) -> bool:
         """
         Collect current market data and add to training dataset.
@@ -436,6 +446,29 @@ class ContinuousAutoTrader:
         except Exception as e:
             logger.error(f"Error in collect_and_store_data: {e}", exc_info=True)
             return False
+
+    def save_training_data(self):
+        """Save training data to JSON file."""
+        try:
+            with open(self.training_data_filename, "w") as f:
+                json.dump(self.training_data, f, indent=2)
+            logger.info(f"Training data saved ({len(self.training_data)} samples)")
+        except Exception as e:
+            logger.error(f"Error saving training data: {e}")
+
+    def load_training_data(self) -> List[Dict]:
+        """Load training data from JSON file."""
+        try:
+            with open(self.training_data_filename, "r") as f:
+                data = json.load(f)
+            logger.info(f"Training data loaded ({len(data)} samples)")
+            return data
+        except FileNotFoundError:
+            logger.info("No training data file found, starting fresh")
+            return []
+        except Exception as e:
+            logger.error(f"Error loading training data: {e}")
+            return []
 
     def create_lstm_model(self):
         """Create a new LSTM model for sequential data."""
@@ -524,6 +557,72 @@ class ContinuousAutoTrader:
             logger.error(f"Error fitting scalers: {e}")
             return False
 
+    def prepare_lstm_training_data(self) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
+        """Prepare sequential training data for LSTM with proper future prediction labeling."""
+        try:
+            if len(self.training_data) <= self.sequence_length:
+                logger.warning(f"Not enough data points. Have {len(self.training_data)}, need at least {self.sequence_length + 1}")
+                return None, None
+                
+            sequences = []
+            labels = []
+            
+            # Convert to list for easier slicing and filter valid data
+            valid_data = [d for d in self.training_data if 'price' in d and 'volume' in d and d['price'] > 0]
+            
+            if len(valid_data) <= self.sequence_length:
+                logger.warning(f"Not enough valid data points. Have {len(valid_data)}, need at least {self.sequence_length + 1}")
+                return None, None
+            
+            logger.info(f"Preparing LSTM training data from {len(valid_data)} valid data points")
+            
+            for i in range(len(valid_data) - self.sequence_length):
+                # Get sequence of data points
+                sequence = valid_data[i:i + self.sequence_length]
+                
+                # Extract features for each point in the sequence
+                sequence_features = []
+                for j in range(len(sequence)):
+                    feature_vector = self.prepare_features(sequence[j])
+                    sequence_features.append(feature_vector)
+                
+                # The label is whether the price went up after the sequence
+                current_price = valid_data[i + self.sequence_length - 1]['price']
+                future_price = valid_data[i + self.sequence_length]['price']
+                label = 1 if future_price > current_price else 0
+                
+                sequences.append(sequence_features)
+                labels.append(label)
+            
+            if not sequences:
+                logger.warning("No valid sequences created")
+                return None, None
+                
+            # Convert to numpy arrays
+            X = np.array(sequences, dtype=np.float32)
+            y = np.array(labels, dtype=np.float32)
+            
+            logger.info(f"Created {len(X)} sequences with shape {X.shape} and {len(y)} labels")
+            
+            # Scale the features if we have enough data
+            if len(X) > 0 and hasattr(self, 'feature_scaler') and self.scalers_fitted:
+                try:
+                    n_samples, seq_len, n_features = X.shape
+                    X_reshaped = X.reshape(-1, n_features)
+                    X_scaled = self.feature_scaler.transform(X_reshaped)
+                    X = X_scaled.reshape(n_samples, seq_len, n_features)
+                    logger.debug(f"Successfully scaled features to shape {X.shape}")
+                except Exception as e:
+                    logger.error(f"Error scaling features: {e}")
+                    return None, None
+            else:
+                logger.warning("Skipping feature scaling - scaler not fitted")
+            
+            return X, y
+            
+        except Exception as e:
+            logger.error(f"Error in prepare_lstm_training_data: {e}")
+            return None, None
     def prepare_lstm_training_data(self) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
         """Prepare sequential training data for LSTM with proper future prediction labeling."""
         try:

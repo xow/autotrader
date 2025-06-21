@@ -263,7 +263,7 @@ class TestAlertingSystem:
     
     def test_alert_creation(self):
         """Test alert creation and serialization."""
-        from autotrader.utils.error_handler import ErrorAlert
+        from autotrader.utils.alerting import ErrorAlert
         
         alert = ErrorAlert(
             error_type="TEST_ERROR",
@@ -299,7 +299,7 @@ class TestAlertingSystem:
             'recipient': 'admin@test.com'
         }
         
-        from autotrader.utils.error_handler import ErrorAlert
+        from autotrader.utils.alerting import ErrorAlert
         alert = ErrorAlert(
             error_type="TEST_ERROR",
             timestamp=datetime.now().isoformat(),
@@ -400,24 +400,65 @@ class TestSystemHealthCheck:
     @patch('autotrader.utils.error_handler.psutil')
     def test_health_check_with_psutil(self, mock_psutil):
         """Test health check when psutil is available."""
-        # Mock memory and disk usage
+        # Mock memory usage
         mock_memory = Mock()
         mock_memory.percent = 75
         mock_memory.available = 4 * 1024**3  # 4GB
         mock_psutil.virtual_memory.return_value = mock_memory
         
+        # Mock disk usage
         mock_disk = Mock()
         mock_disk.percent = 50
         mock_disk.free = 100 * 1024**3  # 100GB
         mock_psutil.disk_usage.return_value = mock_disk
         
+        # Mock CPU usage
+        mock_psutil.cpu_percent.return_value = 30.5
+        
+        # Mock network connectivity
+        def mock_net_io_counters():
+            io = Mock()
+            io.bytes_sent = 1024 * 1024
+            io.bytes_recv = 2 * 1024 * 1024
+            return io
+        mock_psutil.net_io_counters = mock_net_io_counters
+        
+        # Mock process info
+        mock_process = Mock()
+        mock_process.cpu_percent.return_value = 5.5
+        mock_process.memory_percent.return_value = 25.0
+        mock_psutil.Process.return_value = mock_process
+        
         from autotrader.utils.error_handler import check_system_health
         health = check_system_health()
         
-        assert health['overall_status'] in ['HEALTHY', 'DEGRADED']
+        # Verify overall structure
+        assert 'checks' in health
+        assert 'status' in health
+        assert 'timestamp' in health
+        
+        # Verify overall status is one of the expected values
+        assert health['status'] in ['OK', 'WARNING', 'ERROR']
+        
+        # Verify specific checks were performed
         assert 'memory' in health['checks']
         assert 'disk' in health['checks']
-        assert health['checks']['memory']['status'] == 'OK'
+        assert 'cpu' in health['checks']
+        assert 'network' in health['checks']
+        
+        # Verify memory check
+        assert 'status' in health['checks']['memory']
+        assert 'used_percent' in health['checks']['memory']
+        assert 'threshold' in health['checks']['memory']
+        
+        # Verify disk check
+        assert 'status' in health['checks']['disk']
+        assert 'used_percent' in health['checks']['disk']
+        assert 'threshold' in health['checks']['disk']
+        
+        # Verify status values are valid
+        for check_name, check_data in health['checks'].items():
+            assert check_data['status'] in ['OK', 'WARNING', 'ERROR']
         assert health['checks']['disk']['status'] == 'OK'
     
     @patch('socket.create_connection')

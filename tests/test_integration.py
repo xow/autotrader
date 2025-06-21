@@ -390,7 +390,7 @@ class TestSystemIntegration:
             # Network failures
             lambda: setattr(isolated_trader, 'fetch_market_data', lambda: None),
             # Model prediction failures
-            lambda: mock_tensorflow["model"].predict.side_effect = Exception("Model Error"),
+            lambda: setattr(mock_tensorflow["model"].predict, 'side_effect', Exception("Model Error")),
             # File system failures
             lambda: patch('builtins.open', side_effect=IOError("File Error")),
         ]
