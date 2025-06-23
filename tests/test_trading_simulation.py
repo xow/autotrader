@@ -5,6 +5,7 @@ Tests for trading simulation and portfolio management.
 import pytest
 import numpy as np
 from unittest.mock import Mock, patch, MagicMock
+from collections import deque # Import deque
 
 # Import the autotrader module
 import sys
@@ -51,14 +52,20 @@ class TestTradingSimulation:
             "rsi": 50.0
         }
         
+        # To make the SELL trade execute, we need to have a position size
+        isolated_trader.position_size = isolated_trader.trade_amount # Set a position size
+        
+        # Capture initial balance *after* setting position size, before the actual trade
+        initial_balance = isolated_trader.balance
+        
         isolated_trader.execute_simulated_trade(sell_signal)
         
         # Balance should increase (gained from selling BTC)
         assert isolated_trader.balance > initial_balance
         
         # Calculate expected revenue
-        trade_amount = 0.01  # BTC
-        fee_rate = 0.001  # 0.1%
+        trade_amount = isolated_trader.trade_amount # Use trader's trade_amount
+        fee_rate = isolated_trader.fee_rate # Use trader's fee_rate
         expected_revenue = sell_signal["price"] * trade_amount * (1 - fee_rate)
         expected_balance = initial_balance + expected_revenue
         
@@ -87,7 +94,7 @@ class TestTradingSimulation:
         # Test low confidence BUY signal
         low_confidence_buy = {
             "signal": "BUY",
-            "confidence": 0.55,  # Too close to neutral (0.5)
+            "confidence": isolated_trader.settings.trading.buy_confidence_threshold - 0.01,  # Just below threshold
             "price": 45000.0,
             "rsi": 50.0
         }
@@ -98,7 +105,7 @@ class TestTradingSimulation:
         # Test low confidence SELL signal
         low_confidence_sell = {
             "signal": "SELL",
-            "confidence": 0.45,  # Too close to neutral (0.5)
+            "confidence": isolated_trader.settings.trading.sell_confidence_threshold + 0.01,  # Just above threshold
             "price": 45000.0,
             "rsi": 50.0
         }
@@ -114,7 +121,7 @@ class TestTradingSimulation:
             "signal": "BUY",
             "confidence": 0.9,  # High confidence
             "price": 45000.0,
-            "rsi": 85.0  # Overbought (>80)
+            "rsi": isolated_trader.settings.trading.rsi_overbought + 5.0  # Overbought
         }
         
         isolated_trader.execute_simulated_trade(overbought_buy_signal)
@@ -130,7 +137,7 @@ class TestTradingSimulation:
             "signal": "SELL",
             "confidence": 0.1,  # Low confidence (should trigger SELL)
             "price": 45000.0,
-            "rsi": 15.0  # Oversold (<20)
+            "rsi": isolated_trader.settings.trading.rsi_oversold - 5.0  # Oversold
         }
         
         isolated_trader.execute_simulated_trade(oversold_sell_signal)
@@ -169,8 +176,8 @@ class TestTradingSimulation:
         
         isolated_trader.execute_simulated_trade(buy_signal)
         
-        trade_amount = 0.01
-        fee_rate = 0.001
+        trade_amount = isolated_trader.trade_amount
+        fee_rate = isolated_trader.fee_rate
         expected_cost = 50000.0 * trade_amount * (1 + fee_rate)
         expected_balance = initial_balance - expected_cost
         
@@ -178,6 +185,7 @@ class TestTradingSimulation:
         
         # Reset balance for SELL test
         isolated_trader.balance = initial_balance
+        isolated_trader.position_size = isolated_trader.trade_amount # Set position for sell
         
         # Test SELL trade fee calculation
         sell_signal = {
@@ -284,11 +292,16 @@ class TestTradingSimulation:
             "rsi": 50.0
         }
         
-        with patch('logging.getLogger') as mock_logger:
-            isolated_trader.execute_simulated_trade(buy_signal)
-            
-            # Should have logged the trade execution
-            mock_logger.return_value.info.assert_called()
+        # The mock_logging fixture already patches logging.getLogger
+        # No need to patch it again here.
+        isolated_trader.execute_simulated_trade(buy_signal)
+        
+        # Should have logged the trade execution
+        mock_logging.info.assert_called()
+        # Check for specific log message
+        mock_logging.info.assert_any_call(
+            f"BUY executed: {isolated_trader.trade_amount:.4f} BTC at {buy_signal['price']:.2f} AUD. New balance: {isolated_trader.balance:.2f} AUD, Position: {isolated_trader.position_size:.4f} BTC"
+        )
     
     def test_portfolio_balance_tracking(self, isolated_trader):
         """Test portfolio balance tracking across multiple trades."""
@@ -355,7 +368,7 @@ class TestTradingSimulation:
     def test_trade_amount_consistency(self, isolated_trader):
         """Test that trade amounts are consistent across all trades."""
         # All trades should use the same amount (0.01 BTC)
-        trade_amount = 0.01
+        trade_amount = isolated_trader.trade_amount
         
         # Test multiple trades with different prices
         prices = [40000.0, 45000.0, 50000.0, 55000.0]
@@ -373,7 +386,7 @@ class TestTradingSimulation:
             isolated_trader.execute_simulated_trade(buy_signal)
             
             # Calculate expected cost
-            fee_rate = 0.001
+            fee_rate = isolated_trader.fee_rate
             expected_cost = price * trade_amount * (1 + fee_rate)
             expected_balance = initial_balance - expected_cost
             

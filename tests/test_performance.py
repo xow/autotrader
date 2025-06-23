@@ -10,11 +10,12 @@ import threading
 from unittest.mock import Mock, patch, MagicMock
 import numpy as np
 from datetime import datetime, timedelta
+from collections import deque # Import deque
 
 # Import the autotrader module
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from autotrader import ContinuousAutoTrader
+from autotrader import ContinuousAutoTrader # Import from top-level autotrader.py
 
 # Import test utilities
 from test_utils import (
@@ -65,10 +66,11 @@ class TestPerformanceMetrics:
             test_prices = prices[i:i+100] if i+100 <= len(prices) else prices[-100:]
             test_volumes = volumes[i:i+100] if i+100 <= len(volumes) else volumes[-100:]
             
-            indicators = isolated_trader.calculate_technical_indicators(test_prices, test_volumes)
+            indicators_list = isolated_trader.calculate_technical_indicators(prices=test_prices, volumes=test_volumes)
             
             # Verify indicators are calculated
-            assert len(indicators) == 10  # Expected number of indicators
+            assert len(indicators_list) > 0 # Should return a list of data points
+            assert 'sma_5' in indicators_list[-1] # Check for an indicator in the last data point
         
         end_time = time.time()
         calculation_time = end_time - start_time
@@ -96,7 +98,7 @@ class TestPerformanceMetrics:
         
         for _ in range(100):
             mock_data = [market_gen.generate_tick()]
-            prediction = isolated_trader.predict_trade_signal(mock_data)
+            prediction = isolated_trader.predict_trade_signal(mock_data[0]) # Pass single dict
             
             # Verify prediction is valid
             assert "signal" in prediction
@@ -137,7 +139,7 @@ class TestPerformanceMetrics:
         assert memory_increase < 100  # Less than 100MB increase
         
         # Verify data was limited by max_training_samples
-        assert len(isolated_trader.training_data) <= isolated_trader.max_training_samples
+        assert len(isolated_trader.training_data) == isolated_trader.max_training_samples # Should be exactly maxlen
     
     def test_file_io_performance(self, isolated_trader, sample_training_data):
         """Test file I/O performance."""
@@ -251,6 +253,7 @@ class TestPerformanceMetrics:
         start_time = time.time()
         
         # Process large dataset
+        isolated_trader.training_data = deque(maxlen=isolated_trader.max_training_samples)
         for i, data_point in enumerate(large_dataset):
             isolated_trader.training_data.append({
                 **data_point,
@@ -263,12 +266,18 @@ class TestPerformanceMetrics:
                 "macd_signal": 0.0,
                 "bb_upper": data_point["price"] + 100,
                 "bb_lower": data_point["price"] - 100,
-                "volume_sma": data_point["volume"]
+                "volume_sma": data_point["volume"],
+                "marketId": "BTC-AUD", # Add marketId for extract_comprehensive_data
+                "lastPrice": str(data_point["price"]), # Add lastPrice as string
+                "bestBid": str(data_point["price"] - 5),
+                "bestAsk": str(data_point["price"] + 5),
+                "high24h": str(data_point["price"] + 100),
+                "low24h": str(data_point["price"] - 100)
             })
             
-            # Periodic memory management
-            if len(isolated_trader.training_data) > isolated_trader.max_training_samples:
-                isolated_trader.training_data = isolated_trader.training_data[-isolated_trader.max_training_samples:]
+            # Deque handles maxlen automatically
+            # if len(isolated_trader.training_data) > isolated_trader.max_training_samples:
+            #     isolated_trader.training_data = isolated_trader.training_data[-isolated_trader.max_training_samples:]
         
         processing_time = time.time() - start_time
         
@@ -280,7 +289,7 @@ class TestPerformanceMetrics:
         start_time = time.time()
         
         # Test scaler fitting
-        isolated_trader.fit_scalers(isolated_trader.training_data)
+        isolated_trader.fit_scalers() # No need to pass data
         
         scaler_time = time.time() - start_time
         assert scaler_time < 5.0  # Scaler fitting should be fast
@@ -305,7 +314,7 @@ class TestPerformanceMetrics:
             volumes = np.random.uniform(50, 500, 100)
             
             # Calculate indicators
-            isolated_trader.calculate_technical_indicators(prices, volumes)
+            isolated_trader.calculate_technical_indicators(prices=prices, volumes=volumes)
             
             # Simulate feature preparation
             data_point = {
@@ -319,7 +328,8 @@ class TestPerformanceMetrics:
                 "macd": 0.0,
                 "macd_signal": 0.0,
                 "bb_upper": prices[-1] + 100,
-                "bb_lower": prices[-1] - 100
+                "bb_lower": prices[-1] - 100,
+                "spread": 10.0 # Add spread for prepare_features
             }
             isolated_trader.prepare_features(data_point)
         
@@ -346,7 +356,7 @@ class TestPerformanceMetrics:
         
         for cycle in range(10):  # 10 cycles
             # Clear data to simulate long-running operation
-            isolated_trader.training_data = []
+            isolated_trader.training_data = deque(maxlen=isolated_trader.max_training_samples) # Reset deque
             
             # Collect data
             with patch.object(isolated_trader, 'fetch_market_data') as mock_fetch:
@@ -379,9 +389,9 @@ class TestPerformanceMetrics:
         mock_tensorflow["model"].predict.return_value = np.array([[0.7]])
         
         # Prepare data
-        isolated_trader.training_data = TestDataBuilder.create_trending_data(
+        isolated_trader.training_data = deque(TestDataBuilder.create_trending_data(
             start_price=45000, end_price=46000, num_points=200
-        )
+        ), maxlen=isolated_trader.max_training_samples)
         isolated_trader.scalers_fitted = True
         
         # Measure response times for different operations
@@ -396,16 +406,16 @@ class TestPerformanceMetrics:
         for _ in range(50):  # 50 iterations
             # Test data collection response time
             start_time = time.time()
-            with patch.object(isolated_trader, 'fetch_market_data', 
+            with patch.object(isolated_trader, 'fetch_market_data',
                             return_value=[market_gen.generate_tick()]):
                 isolated_trader.collect_and_store_data()
             response_times["data_collection"].append(time.time() - start_time)
             
             # Test prediction response time
             start_time = time.time()
-            with patch.object(isolated_trader, 'fetch_market_data', 
+            with patch.object(isolated_trader, 'fetch_market_data',
                             return_value=[market_gen.generate_tick()]):
-                isolated_trader.predict_trade_signal([market_gen.generate_tick()])
+                isolated_trader.predict_trade_signal(market_gen.generate_tick()) # Pass single dict
             response_times["prediction"].append(time.time() - start_time)
             
             # Test trade execution response time
@@ -438,9 +448,9 @@ class TestPerformanceMetrics:
         mock_tensorflow["model"].predict.return_value = np.array([[0.6]])
         
         # Prepare system
-        isolated_trader.training_data = TestDataBuilder.create_trending_data(
+        isolated_trader.training_data = deque(TestDataBuilder.create_trending_data(
             start_price=45000, end_price=46000, num_points=100
-        )
+        ), maxlen=isolated_trader.max_training_samples)
         isolated_trader.scalers_fitted = True
         
         # Measure throughput for different operations
@@ -450,7 +460,7 @@ class TestPerformanceMetrics:
         start_time = time.time()
         collections = 0
         
-        with patch.object(isolated_trader, 'fetch_market_data', 
+        with patch.object(isolated_trader, 'fetch_market_data',
                         return_value=[market_gen.generate_tick()]):
             while time.time() - start_time < 2.0:  # 2 seconds
                 isolated_trader.collect_and_store_data()
@@ -463,10 +473,10 @@ class TestPerformanceMetrics:
         start_time = time.time()
         predictions = 0
         
-        with patch.object(isolated_trader, 'fetch_market_data', 
+        with patch.object(isolated_trader, 'fetch_market_data',
                         return_value=[market_gen.generate_tick()]):
             while time.time() - start_time < 2.0:  # 2 seconds
-                isolated_trader.predict_trade_signal([market_gen.generate_tick()])
+                isolated_trader.predict_trade_signal(market_gen.generate_tick()) # Pass single dict
                 predictions += 1
         
         prediction_throughput = predictions / 2.0

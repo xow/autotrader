@@ -13,6 +13,7 @@ import tensorflow as tf
 from unittest.mock import Mock, patch, MagicMock
 from typing import Dict, List, Any
 from datetime import datetime, timedelta
+from collections import deque
 
 import sys
 
@@ -146,7 +147,7 @@ def mock_file_operations(temp_dir):
 
 
 @pytest.fixture
-def isolated_trader(temp_dir, test_config):
+def isolated_trader(temp_dir, test_config, mock_logging): # Add mock_logging as a dependency
     """Create an isolated trader instance for testing."""
     # Change to temp directory for isolated file operations
     original_cwd = os.getcwd()
@@ -154,17 +155,25 @@ def isolated_trader(temp_dir, test_config):
 
     # Import the ContinuousAutoTrader class
     from autotrader import ContinuousAutoTrader
+    import autotrader.core.trader as trader_module # Import the module to patch its logger
 
-    # Create a trader instance with test configuration
-    trader = ContinuousAutoTrader(
-        initial_balance=test_config["initial_balance"],
-        save_interval_seconds=test_config["save_interval_seconds"],
-        training_interval_seconds=test_config["training_interval_seconds"],
-        max_training_samples=test_config["max_training_samples"],
-        sequence_length=test_config["sequence_length"]
-    )
+    # Patch the logger within the trader module
+    with patch.object(trader_module, 'logger', mock_logging):
+        # Create a trader instance. It will use its internal MockSettings.
+        trader = ContinuousAutoTrader()
+        
+        # Override specific settings if needed for a particular test scenario
+        # For example, if a test needs a specific initial balance:
+        trader.balance = test_config["initial_balance"]
+        trader.save_interval_seconds = test_config["save_interval_seconds"]
+        trader.training_interval_seconds = test_config["training_interval_seconds"]
+        trader.sequence_length = test_config["sequence_length"]
+        # Use the max_training_samples from the test_config
+        trader.max_training_samples = test_config["max_training_samples"]
+        # Ensure the deque is initialized with the correct maxlen
+        trader.training_data = deque(maxlen=trader.max_training_samples)
 
-    yield trader
+        yield trader
 
     # Cleanup
     os.chdir(original_cwd)
