@@ -22,5 +22,7 @@ __all__ = [
     "ContinuousAutoTrader",
     "AutotraderError",
     "setup_logging",
-    "__version__"
+    "__version__",
+    "AutotraderEngine",
+    "Config"
 ]

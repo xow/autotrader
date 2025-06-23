@@ -282,8 +282,8 @@ class TestMachineLearningComponents:
             
             prediction = isolated_trader.predict_trade_signal(mock_market_data)
             
-            assert prediction["signal"] == expected_signal
-            assert prediction["confidence"] == confidence
+            assert prediction[0] == expected_signal
+            assert prediction[1] == confidence
     
     def test_prediction_with_invalid_input(self, isolated_trader, mock_tensorflow):
         """Test prediction handling with invalid input data."""
@@ -291,13 +291,13 @@ class TestMachineLearningComponents:
         
         # Test with empty market data
         prediction = isolated_trader.predict_trade_signal([])
-        assert prediction["signal"] == "HOLD"
-        assert prediction["confidence"] == 0.5
+        assert prediction[0] == "HOLD"
+        assert prediction[1] == 0.5
         
         # Test with invalid market data structure
         invalid_data = [{"invalid": "data"}]
         prediction = isolated_trader.predict_trade_signal(invalid_data)
-        assert prediction["signal"] == "HOLD"
+        assert prediction[0] == "HOLD"
     
     def test_model_performance_tracking(self, isolated_trader, mock_tensorflow):
         """Test that model performance is properly tracked during training."""

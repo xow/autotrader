@@ -14,6 +14,7 @@ from unittest.mock import Mock, patch, MagicMock
 from typing import Dict, List, Any
 from datetime import datetime, timedelta
 
+import sys
 
 @pytest.fixture(scope="session")
 def temp_dir():
@@ -69,10 +70,10 @@ def sample_training_data():
         
         data_point = {
             "timestamp": (datetime.now() - timedelta(minutes=i)).isoformat(),
-            "price": price,
-            "volume": volume,
-            "bid": price - spread/2,
-            "ask": price + spread/2,
+            "price": float(price),
+            "volume": float(volume),
+            "bid": float(price - spread/2),
+            "ask": float(price + spread/2),
             "high24h": price + np.random.uniform(0, 200),
             "low24h": price - np.random.uniform(0, 200),
             "spread": spread,
@@ -113,14 +114,15 @@ def mock_requests():
         yield mock_get
 
 
+
 @pytest.fixture
 def mock_tensorflow():
     """Mock TensorFlow for model testing."""
-    with patch("tensorflow.keras.models.load_model") as mock_load, \
-         patch("tensorflow.keras.Sequential") as mock_sequential:
-        
-        # Mock model
-        mock_model = Mock()
+    mock_sequential = Mock()
+    mock_model = Mock()
+    mock_sequential.return_value = mock_model
+
+    with patch("tensorflow.keras.models.Sequential", return_value=mock_sequential) as Sequential:
         mock_model.fit.return_value.history = {
             "loss": [0.5, 0.4, 0.3],
             "accuracy": [0.6, 0.7, 0.8],
@@ -129,16 +131,8 @@ def mock_tensorflow():
         }
         mock_model.predict.return_value = np.array([[0.7]])
         mock_model.save.return_value = None
-        
-        mock_sequential.return_value = mock_model
-        mock_load.return_value = mock_model
-        
-        yield {
-            "model": mock_model,
-            "load_model": mock_load,
-            "sequential": mock_sequential
-        }
 
+        yield {"sequential": Sequential, "model": mock_model}
 
 @pytest.fixture
 def mock_file_operations(temp_dir):
@@ -157,11 +151,11 @@ def isolated_trader(temp_dir, test_config):
     # Change to temp directory for isolated file operations
     original_cwd = os.getcwd()
     os.chdir(temp_dir)
-    
-    # Import after changing directory to avoid file conflicts
+
+    # Import the ContinuousAutoTrader class
     from autotrader import ContinuousAutoTrader
-    
-    # Create trader with test configuration
+
+    # Create a trader instance with test configuration
     trader = ContinuousAutoTrader(
         initial_balance=test_config["initial_balance"],
         save_interval_seconds=test_config["save_interval_seconds"],
@@ -169,9 +163,9 @@ def isolated_trader(temp_dir, test_config):
         max_training_samples=test_config["max_training_samples"],
         sequence_length=test_config["sequence_length"]
     )
-    
+
     yield trader
-    
+
     # Cleanup
     os.chdir(original_cwd)
 

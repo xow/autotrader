@@ -27,7 +27,11 @@ class TestAPIIntegration:
             mock_response.raise_for_status.return_value = None
             mock_get.return_value = mock_response
             
-            isolated_trader.fetch_market_data()
+            try:
+                isolated_trader.fetch_market_data()
+            except Exception as e:
+                print(f"API request failed: {e}")
+                raise
             
             # Verify the URL and params were called correctly
             expected_url = "https://api.btcmarkets.net/v3/markets/tickers"
@@ -60,6 +64,7 @@ class TestAPIIntegration:
             
             result = isolated_trader.fetch_market_data()
             
+            print(f"API result: {result}")
             assert result == mock_response_data
             assert len(result) == 1
             assert result[0]["marketId"] == "BTC-AUD"
@@ -131,9 +136,17 @@ class TestAPIIntegration:
         with patch("requests.get") as mock_get, \
              patch("time.sleep") as mock_sleep:
             
-            mock_get.side_effect = requests.exceptions.RequestException("API Error")
+            mock_response = Mock()
+            mock_response.status_code = 500
+            mock_response.text = "Internal Server Error"
+            mock_response.raise_for_status.side_effect = requests.exceptions.HTTPError("500 Internal Server Error", response=mock_response)
+            mock_get.side_effect = mock_response
             
-            isolated_trader.fetch_market_data()
+            try:
+                isolated_trader.fetch_market_data()
+            except Exception as e:
+                print(f"API request failed: {e}")
+                raise
             
             # Should have called sleep with exponential backoff
             expected_sleep_calls = [
