@@ -12,7 +12,7 @@ __email__ = "autotrader@example.com"
 # Core imports for easy access
 from .core.engine import AutotraderEngine
 from .core.config import Config
-from .core.trader import ContinuousAutoTrader
+from .core.continuous_autotrader import ContinuousAutoTrader
 from .utils.logging_config import setup_logging
 from .utils.exceptions import AutotraderError
 
