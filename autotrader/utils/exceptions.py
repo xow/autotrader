@@ -59,14 +59,17 @@ class APIError(AutotraderError):
         message: str,
         status_code: Optional[int] = None,
         response_data: Optional[Dict[str, Any]] = None,
-        endpoint: Optional[str] = None
+        endpoint: Optional[str] = None,
+        context: Optional[Dict[str, Any]] = None # Add context parameter
     ):
-        context = {
+        # Merge specific API error context with general context
+        full_context = {
             "status_code": status_code,
             "response_data": response_data,
-            "endpoint": endpoint
+            "endpoint": endpoint,
+            **(context or {}) # Merge provided context
         }
-        super().__init__(message, "API_ERROR", context)
+        super().__init__(message, "API_ERROR", full_context)
         self.status_code = status_code
         self.response_data = response_data
         self.endpoint = endpoint
@@ -83,31 +86,28 @@ class APIConnectionError(APIError):
         endpoint: Optional[str] = None,
         status_code: Optional[int] = None,
         response_text: Optional[str] = None,
+        context: Optional[Dict[str, Any]] = None, # Add context parameter
         **kwargs
     ):
-        context = {
+        # Merge specific connection error context with general context
+        full_context = {
             "endpoint": endpoint,
             "status_code": status_code,
             "response_text": response_text,
+            **(context or {}), # Merge provided context
             **kwargs
         }
         super().__init__(
             message=message,
             status_code=status_code,
             response_data={"text": response_text} if response_text else None,
-            endpoint=endpoint
+            endpoint=endpoint,
+            context=full_context # Pass merged context to parent
         )
         # Ensure these are set directly on the instance for backward compatibility
         self.endpoint = endpoint
         self.status_code = status_code
         self.response_text = response_text
-        # Also store them in context for consistency
-        self.context.update({
-            "endpoint": endpoint,
-            "status_code": status_code,
-            "response_text": response_text,
-            **kwargs
-        })
 
 
 class APIRateLimitError(APIError):
@@ -120,14 +120,17 @@ class APIRateLimitError(APIError):
         message: str,
         rate_limit: Optional[int] = None,
         reset_time: Optional[float] = None,
-        endpoint: Optional[str] = None
+        endpoint: Optional[str] = None,
+        context: Optional[Dict[str, Any]] = None # Add context parameter
     ):
-        context = {
+        # Merge specific rate limit context with general context
+        full_context = {
             "rate_limit": rate_limit,
             "reset_time": reset_time,
-            "endpoint": endpoint
+            "endpoint": endpoint,
+            **(context or {}) # Merge provided context
         }
-        super().__init__(message, 429, None, endpoint)
+        super().__init__(message, 429, None, endpoint, full_context) # Pass merged context
         self.rate_limit = rate_limit
         self.reset_time = reset_time
         self.retry_after = reset_time - time.time() if reset_time else None
@@ -152,13 +155,16 @@ class DataError(AutotraderError):
         self,
         message: str,
         data_type: Optional[str] = None,
-        validation_errors: Optional[list] = None
+        validation_errors: Optional[list] = None,
+        context: Optional[Dict[str, Any]] = None # Add context parameter
     ):
-        context = {
+        # Merge specific data error context with general context
+        full_context = {
             "data_type": data_type,
-            "validation_errors": validation_errors
+            "validation_errors": validation_errors,
+            **(context or {}) # Merge provided context
         }
-        super().__init__(message, "DATA_ERROR", context)
+        super().__init__(message, "DATA_ERROR", full_context)
         self.data_type = data_type
         self.validation_errors = validation_errors
 
@@ -173,20 +179,24 @@ class InvalidPriceDataError(DataError):
         message: str,
         data: Optional[Any] = None,
         missing_fields: Optional[List[str]] = None,
-        validation_errors: Optional[Dict[str, str]] = None
+        validation_errors: Optional[Dict[str, str]] = None,
+        context: Optional[Dict[str, Any]] = None # Add context parameter
     ):
-        context = {
+        # Merge specific price data error context with general context
+        full_context = {
             "data_type": type(data).__name__ if data is not None else None,
             "missing_fields": missing_fields or [],
-            "validation_errors": validation_errors or {}
+            "validation_errors": validation_errors or {},
+            **(context or {}) # Merge provided context
         }
         super().__init__(
             message=message,
             data_type="price_data",
-            validation_errors=context["validation_errors"]
+            validation_errors=full_context["validation_errors"], # Use full_context
+            context=full_context # Pass merged context to parent
         )
         self.data = data
-        self.missing_fields = context["missing_fields"]
+        self.missing_fields = full_context["missing_fields"] # Use full_context
 
 
 class MLError(AutotraderError):
@@ -199,14 +209,17 @@ class MLError(AutotraderError):
         message: str,
         model_name: Optional[str] = None,
         training_step: Optional[int] = None,
-        metrics: Optional[Dict[str, float]] = None
+        metrics: Optional[Dict[str, float]] = None,
+        context: Optional[Dict[str, Any]] = None # Add context parameter
     ):
-        context = {
+        # Merge specific ML error context with general context
+        full_context = {
             "model_name": model_name,
             "training_step": training_step,
-            "metrics": metrics
+            "metrics": metrics,
+            **(context or {}) # Merge provided context
         }
-        super().__init__(message, "ML_ERROR", context)
+        super().__init__(message, "ML_ERROR", full_context)
         self.model_name = model_name
         self.training_step = training_step
         self.metrics = metrics
@@ -224,17 +237,20 @@ class ModelTrainingError(MLError):
         epoch: Optional[int] = None,
         loss: Optional[float] = None,
         metrics: Optional[Dict[str, float]] = None,
+        context: Optional[Dict[str, Any]] = None, # Add context parameter
         **kwargs
     ):
         metrics = metrics or {}
         if loss is not None:
             metrics["loss"] = loss
             
-        context = {
+        # Merge specific training error context with general context
+        full_context = {
             "training_samples": training_samples,
             "epoch": epoch,
             "loss": loss,
             "metrics": metrics,
+            **(context or {}), # Merge provided context
             **{k: v for k, v in kwargs.items() if k != 'model_name'}
         }
         
@@ -242,15 +258,14 @@ class ModelTrainingError(MLError):
             message=message,
             model_name=kwargs.get("model_name"),
             training_step=epoch,
-            metrics=metrics
+            metrics=metrics,
+            context=full_context # Pass merged context to parent
         )
         # Ensure these are set directly on the instance for backward compatibility
         self.training_samples = training_samples
         self.epoch = epoch
         self.loss = loss
         self.metrics = metrics
-        # Also store them in context for consistency
-        self.context.update(context)
 
 
 class TradingError(AutotraderError):
@@ -262,13 +277,16 @@ class TradingError(AutotraderError):
         self,
         message: str,
         trade_action: Optional[str] = None,
-        portfolio_state: Optional[Dict[str, Any]] = None
+        portfolio_state: Optional[Dict[str, Any]] = None,
+        context: Optional[Dict[str, Any]] = None # Add context parameter
     ):
-        context = {
+        # Merge specific trading error context with general context
+        full_context = {
             "trade_action": trade_action,
-            "portfolio_state": portfolio_state
+            "portfolio_state": portfolio_state,
+            **(context or {}) # Merge provided context
         }
-        super().__init__(message, "TRADING_ERROR", context)
+        super().__init__(message, "TRADING_ERROR", full_context)
         self.trade_action = trade_action
         self.portfolio_state = portfolio_state
 
@@ -282,13 +300,16 @@ class ConfigurationError(AutotraderError):
         self,
         message: str,
         config_key: Optional[str] = None,
-        config_value: Optional[Any] = None
+        config_value: Optional[Any] = None,
+        context: Optional[Dict[str, Any]] = None # Add context parameter
     ):
-        context = {
+        # Merge specific config error context with general context
+        full_context = {
             "config_key": config_key,
-            "config_value": config_value
+            "config_value": config_value,
+            **(context or {}) # Merge provided context
         }
-        super().__init__(message, "CONFIG_ERROR", context)
+        super().__init__(message, "CONFIG_ERROR", full_context)
         self.config_key = config_key
         self.config_value = config_value
 
@@ -302,13 +323,16 @@ class StateError(AutotraderError):
         self,
         message: str,
         state_type: Optional[str] = None,
-        checkpoint_path: Optional[str] = None
+        checkpoint_path: Optional[str] = None,
+        context: Optional[Dict[str, Any]] = None # Add context parameter
     ):
-        context = {
+        # Merge specific state error context with general context
+        full_context = {
             "state_type": state_type,
-            "checkpoint_path": checkpoint_path
+            "checkpoint_path": checkpoint_path,
+            **(context or {}) # Merge provided context
         }
-        super().__init__(message, "STATE_ERROR", context)
+        super().__init__(message, "STATE_ERROR", full_context)
         self.state_type = state_type
         self.checkpoint_path = checkpoint_path
 
@@ -322,13 +346,16 @@ class NetworkError(AutotraderError):
         self,
         message: str,
         connection_type: Optional[str] = None,
-        retry_count: Optional[int] = None
+        retry_count: Optional[int] = None,
+        context: Optional[Dict[str, Any]] = None # Add context parameter
     ):
-        context = {
+        # Merge specific network error context with general context
+        full_context = {
             "connection_type": connection_type,
-            "retry_count": retry_count
+            "retry_count": retry_count,
+            **(context or {}) # Merge provided context
         }
-        super().__init__(message, "NETWORK_ERROR", context)
+        super().__init__(message, "NETWORK_ERROR", full_context)
         self.connection_type = connection_type
         self.retry_count = retry_count
 
@@ -343,14 +370,17 @@ class ValidationError(AutotraderError):
         message: str,
         field_name: Optional[str] = None,
         expected_type: Optional[str] = None,
-        actual_value: Optional[Any] = None
+        actual_value: Optional[Any] = None,
+        context: Optional[Dict[str, Any]] = None # Add context parameter
     ):
-        context = {
+        # Merge specific validation error context with general context
+        full_context = {
             "field_name": field_name,
             "expected_type": expected_type,
-            "actual_value": actual_value
+            "actual_value": actual_value,
+            **(context or {}) # Merge provided context
         }
-        super().__init__(message, "VALIDATION_ERROR", context)
+        super().__init__(message, "VALIDATION_ERROR", full_context)
         self.field_name = field_name
         self.expected_type = expected_type
         self.actual_value = actual_value
@@ -365,13 +395,16 @@ class RecoveryError(AutotraderError):
         self,
         message: str,
         original_error: Optional[Exception] = None,
-        recovery_attempts: Optional[int] = None
+        recovery_attempts: Optional[int] = None,
+        context: Optional[Dict[str, Any]] = None # Add context parameter
     ):
-        context = {
+        # Merge specific recovery error context with general context
+        full_context = {
             "original_error": str(original_error) if original_error else None,
-            "recovery_attempts": recovery_attempts
+            "recovery_attempts": recovery_attempts,
+            **(context or {}) # Merge provided context
         }
-        super().__init__(message, "RECOVERY_ERROR", context)
+        super().__init__(message, "RECOVERY_ERROR", full_context)
         self.original_error = original_error
         self.recovery_attempts = recovery_attempts
 
@@ -387,7 +420,8 @@ class NetworkTimeoutError(AutotraderError):
         self,
         message: str,
         timeout_duration: Optional[float] = None,
-        operation: Optional[str] = None
+        operation: Optional[str] = None,
+        context: Optional[Dict[str, Any]] = None # Add context parameter
     ):
         """
         Initialize the NetworkTimeoutError.
@@ -397,12 +431,14 @@ class NetworkTimeoutError(AutotraderError):
             timeout_duration: Duration in seconds that was exceeded
             operation: Description of the operation that timed out
         """
-        context = {
+        # Merge specific timeout error context with general context
+        full_context = {
             "timeout_duration": timeout_duration,
             "operation": operation,
-            "error_type": "network_timeout"
+            "error_type": "network_timeout",
+            **(context or {}) # Merge provided context
         }
-        super().__init__(message, "NETWORK_TIMEOUT_ERROR", context)
+        super().__init__(message, "NETWORK_TIMEOUT_ERROR", full_context)
         self.timeout_duration = timeout_duration
         self.operation = operation
         
@@ -436,7 +472,8 @@ class CriticalSystemError(AutotraderError):
         message: str,
         component: Optional[str] = None,
         system_state: Optional[Dict[str, Any]] = None,
-        requires_restart: bool = False
+        requires_restart: bool = False,
+        context: Optional[Dict[str, Any]] = None # Add context parameter
     ):
         """
         Initialize the CriticalSystemError.
@@ -447,23 +484,26 @@ class CriticalSystemError(AutotraderError):
             system_state: Dictionary containing relevant system state information
             requires_restart: Whether the system needs to be restarted
         """
-        context = {
+        # Merge specific critical system error context with general context
+        full_context = {
             "component": component,
             "system_state": system_state or {},
             "requires_restart": requires_restart,
-            "timestamp": time.time()
+            "timestamp": time.time(),
+            **(context or {}) # Merge provided context
         }
         super().__init__(
             message=message,
             error_code="CRITICAL_SYSTEM_ERROR",
-            context=context
+            context=full_context # Pass merged context
         )
         self.component = component
-        self.system_state = context["system_state"]
-        self.requires_restart = requires_restart
-        self.timestamp = context["timestamp"]
+        self.system_state = full_context["system_state"]
+        self.requires_restart = full_context["requires_restart"] # Fix: Use full_context
+        self.timestamp = full_context["timestamp"]
     
     def __str__(self) -> str:
+        """Return a string representation of the error."""
         msg = f"Critical system error in {self.component}: {self.message}" if self.component else f"Critical system error: {self.message}"
         if self.requires_restart:
             msg += " (System restart required)"

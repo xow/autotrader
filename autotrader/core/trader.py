@@ -5,13 +5,17 @@ from sklearn.preprocessing import StandardScaler
 from unittest.mock import Mock
 import time # Import time for should_save and should_train
 import pandas as pd # Import pandas for calculate_technical_indicators
+import requests # Import requests for API calls
+import json # Import json for JSONDecodeError
+
+from autotrader.utils.exceptions import APIError, DataError, NetworkError, NetworkTimeoutError # Import custom exceptions
 
 logger = logging.getLogger(__name__)
 
 # Mock Settings classes for testing purposes
 class MockAPISettings:
     def __init__(self):
-        self.base_url = "http://mockapi.com"
+        self.base_url = "https://api.btcmarkets.com/v3" # Use a more realistic base URL for testing
         self.timeout = 5
         self.max_retries = 3
 
@@ -111,20 +115,55 @@ class ContinuousAutoTrader:
         self.scalers_fitted = False # Added to satisfy test_scaler_fitting_insufficient_data
 
     def fetch_market_data(self) -> list:
-        logger.info("Placeholder fetch_market_data called.")
-        # Return some mock data for tests that expect it
-        # Ensure timestamp is a Unix timestamp in milliseconds (integer)
-        # Ensure prices are strings as they come from API, to be converted by extract_comprehensive_data
-        return [{
-            "marketId": "BTC-AUD",
-            "lastPrice": "45000.50",
-            "volume24h": "123.45",
-            "bestBid": "44995.00",
-            "bestAsk": "45005.00",
-            "high24h": "46000.00",
-            "low24h": "44000.00",
-            "timestamp": int(time.time() * 1000) # Current Unix timestamp in milliseconds
-        }]
+        """Fetches market data from the BTCMarkets API."""
+        endpoint = f"{self.settings.api.base_url}/markets/tickers"
+        params = {"marketId": self.settings.trading.market_pair}
+        
+        try:
+            logger.info(f"Fetching market data from {endpoint} with params {params}")
+            response = requests.get(endpoint, params=params, timeout=self.settings.api.timeout)
+            response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
+            
+            data = response.json()
+            logger.info("Successfully fetched market data.")
+            return data
+        
+        except requests.exceptions.Timeout as e:
+            logger.error(f"Market data request timed out: {e}")
+            raise NetworkTimeoutError(
+                message="Market data request timed out",
+                context={"endpoint": endpoint, "timeout": self.settings.api.timeout}
+            ) from e
+        except requests.exceptions.ConnectionError as e:
+            logger.error(f"Failed to connect to the exchange: {e}")
+            raise NetworkError(
+                message="Failed to connect to the exchange",
+                context={"endpoint": endpoint}
+            ) from e
+        except requests.exceptions.HTTPError as e:
+            logger.error(f"API HTTP error: {e.response.status_code} - {e.response.text}")
+            raise APIError(
+                message=f"API HTTP error: {e.response.status_code}",
+                context={
+                    "status_code": e.response.status_code,
+                    "response_data": e.response.text,
+                    "endpoint": endpoint
+                }
+            ) from e
+        except json.JSONDecodeError as e:
+            logger.error(f"Invalid JSON response from API: {e}")
+            raise DataError(
+                message="Invalid JSON response from API",
+                data_type="market_data",
+                validation_errors={"json_decode_error": str(e)},
+                context={"response_text": response.text if 'response' in locals() else None}
+            ) from e
+        except Exception as e:
+            logger.error(f"An unexpected error occurred while fetching market data: {e}", exc_info=True)
+            raise NetworkError(
+                message="An unexpected error occurred during market data fetch",
+                context={"error": str(e), "endpoint": endpoint}
+            ) from e
 
     def extract_comprehensive_data(self, market_data: list) -> dict:
         logger.info("Placeholder extract_comprehensive_data called.")
@@ -153,6 +192,11 @@ class ContinuousAutoTrader:
                 "timestamp": btc_aud_data.get("timestamp", int(time.time() * 1000))
             }
             
+            # Convert string values to floats if they are still strings
+            for key in ["price", "volume", "bid", "ask", "high24h", "low24h", "spread"]:
+                if isinstance(extracted.get(key), str):
+                    extracted[key] = float(extracted[key])
+
             if extracted["price"] <= 0 or extracted["volume"] < 0:
                 return None
             
@@ -420,7 +464,7 @@ class ContinuousAutoTrader:
             # Ensure features are not empty
             if not features:
                 logger.warning("No features prepared for prediction, returning HOLD signal.")
-                return {"signal": "HOLD", "confidence": 0.5, "price": latest_data.get('price', 0.0), "rsi": latest_data.get('rsi', 50.0)}
+                return {"signal": "HOLD", "confidence": 0.5, "price": data_point.get('price', 0.0), "rsi": data_point.get('rsi', 50.0)}
             
             # Scale the features
             scaled_features = self.feature_scaler.transform(np.array(features).reshape(1, -1))

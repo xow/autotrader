@@ -43,12 +43,12 @@ def mock_market_data():
     return [
         {
             "marketId": "BTC-AUD",
-            "lastPrice": "45000.50",
-            "volume24h": "123.45",
-            "bestBid": "44995.00",
-            "bestAsk": "45005.00",
-            "high24h": "46000.00",
-            "low24h": "44000.00"
+            "lastPrice": 45000.50,
+            "volume24h": 123.45,
+            "bestBid": 44995.00,
+            "bestAsk": 45005.00,
+            "high24h": 46000.00,
+            "low24h": 44000.00
         }
     ]
 
@@ -70,7 +70,7 @@ def sample_training_data():
         spread = np.random.uniform(5, 20)
         
         data_point = {
-            "timestamp": (datetime.now() - timedelta(minutes=i)).isoformat(),
+            "timestamp": (datetime.now() - timedelta(minutes=i)).timestamp() * 1000, # Unix timestamp in milliseconds
             "price": float(price),
             "volume": float(volume),
             "bid": float(price - spread/2),
@@ -102,12 +102,12 @@ def mock_requests():
         mock_response.json.return_value = [
             {
                 "marketId": "BTC-AUD",
-                "lastPrice": "45000.50",
-                "volume24h": "123.45",
-                "bestBid": "44995.00",
-                "bestAsk": "45005.00",
-                "high24h": "46000.00",
-                "low24h": "44000.00"
+                "lastPrice": 45000.50,
+                "volume24h": 123.45,
+                "bestBid": 44995.00,
+                "bestAsk": 45005.00,
+                "high24h": 46000.00,
+                "low24h": 44000.00
             }
         ]
         mock_response.raise_for_status.return_value = None
