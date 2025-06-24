@@ -47,6 +47,7 @@ class TradingConfig:
     
     # Risk management
     max_position_size: float = 0.1  # Max 10% of balance per trade
+    risk_per_trade: float = 0.02 # Risk percentage per trade
     stop_loss_percent: float = 0.02  # 2% stop loss
     take_profit_percent: float = 0.04  # 4% take profit
     

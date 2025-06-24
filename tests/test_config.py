@@ -301,7 +301,8 @@ class TestConfigIntegration:
         with patch.dict(os.environ, test_env):
             # Load settings
             settings = Settings()
-            
+            settings.reload_config() # Explicitly reload config to pick up env vars
+    
             # Verify environment loading
             assert settings.environment == Environment.DEVELOPMENT
             assert settings.initial_balance == 7500.0

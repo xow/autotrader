@@ -39,7 +39,44 @@ class TestContinuousAutoTrader:
     def test_initialization_custom_balance(self, mock_file_operations):
         """Test trader initialization with custom balance."""
         custom_balance = 50000.0
-        trader = ContinuousAutoTrader(initial_balance=custom_balance)
+        with patch('autotrader.config.settings.get_settings') as mock_get_settings:
+            mock_settings_instance = Mock()
+            mock_settings_instance.initial_balance = custom_balance
+            mock_get_settings.return_value = mock_settings_instance
+            
+            # Ensure other necessary settings attributes are mocked if accessed by ContinuousAutoTrader
+            mock_settings_instance.buy_confidence_threshold = 0.65
+            mock_settings_instance.rsi_oversold = 20
+            mock_settings_instance.rsi_overbought = 80
+            mock_settings_instance.trade_amount = 0.01
+            mock_settings_instance.fee_rate = 0.001
+            mock_settings_instance.max_position_size = 0.1
+            mock_settings_instance.risk_per_trade = 0.02
+            mock_settings_instance.training_data_filename = "training_data.json"
+            mock_settings_instance.model_filename = "autotrader_model.keras"
+            mock_settings_instance.state_filename = "trader_state.pkl"
+            
+            # Mock the nested config.ml and config.operations attributes
+            mock_settings_instance.config = Mock()
+            mock_settings_instance.config.ml = Mock()
+            mock_settings_instance.config.ml.scalers_filename = "scalers.pkl"
+            mock_settings_instance.config.ml.sequence_length = 20
+            mock_settings_instance.config.ml.max_training_samples = 2000
+            mock_settings_instance.config.ml.lstm_units = 50
+            mock_settings_instance.config.ml.dropout_rate = 0.2
+            mock_settings_instance.config.ml.learning_rate = 0.001
+            mock_settings_instance.config.ml.dense_units = 25
+            mock_settings_instance.config.ml.feature_count = 12
+            mock_settings_instance.config.ml.training_epochs = 10
+            mock_settings_instance.config.ml.batch_size = 16
+            mock_settings_instance.config.ml.volume_sma_period = 10 # Add this if it's accessed
+            
+            mock_settings_instance.config.operations = Mock()
+            mock_settings_instance.config.operations.save_interval = 1800
+            mock_settings_instance.config.operations.training_interval = 600
+            mock_settings_instance.config.operations.data_collection_interval = 60
+            
+            trader = ContinuousAutoTrader()
         
         assert trader.balance == custom_balance
     

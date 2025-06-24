@@ -151,6 +151,16 @@ class Settings:
     def rsi_oversold(self) -> float:
         """RSI oversold level"""
         return self.config.trading.rsi_oversold
+
+    @property
+    def max_position_size(self) -> float:
+        """Maximum position size in BTC"""
+        return self.config.trading.max_position_size
+
+    @property
+    def risk_per_trade(self) -> float:
+        """Risk percentage per trade"""
+        return self.config.trading.risk_per_trade
     
     # ML Settings
     

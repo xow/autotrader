@@ -35,7 +35,6 @@ DEFAULT_CONFIG = {
     "trade_amount": 0.001,
     "fee_rate": 0.001,
     "max_position_size": 0.1,
-    "risk_per_trade": 0.02
 }
 
 # Try to import talib, with fallback for manual calculations
@@ -92,8 +91,8 @@ class ContinuousAutoTrader:
         self.rsi_overbought = self.settings.rsi_overbought
         self.trade_amount = self.settings.trade_amount
         self.fee_rate = self.settings.fee_rate
-        self.max_position_size = self.settings.trading.max_position_size # Accessing from trading config
-        self.risk_per_trade = self.settings.trading.risk_per_trade # This value is now in settings
+        self.max_position_size = self.settings.max_position_size # Accessing from trading config
+        self.risk_per_trade = self.settings.risk_per_trade # This value is now in settings
         self.limited_run = limited_run
         self.run_iterations = run_iterations
         
@@ -105,13 +104,13 @@ class ContinuousAutoTrader:
         self._shutdown_event = threading.Event()
         self.training_data_filename = self.settings.training_data_filename
         self.model_filename = self.settings.model_filename
-        self.scaler_filename = self.settings.ml.scalers_filename # Accessing from ML config
+        self.scaler_filename = self.settings.config.ml.scalers_filename # Accessing from ML config
         self.state_filename = self.settings.state_filename
-        self.min_data_points = self.settings.ml.sequence_length # Using sequence_length as min_data_points
-        self.sequence_length = self.settings.ml.sequence_length # Use ml.sequence_length
-        self.max_training_samples = self.settings.ml.max_training_samples # Use ml.max_training_samples
-        self.save_interval_seconds = self.settings.operations.save_interval
-        self.training_interval_seconds = self.settings.operations.training_interval
+        self.min_data_points = self.settings.config.ml.sequence_length # Using sequence_length as min_data_points
+        self.sequence_length = self.settings.config.ml.sequence_length # Use ml.sequence_length
+        self.max_training_samples = self.settings.config.ml.max_training_samples # Use ml.max_training_samples
+        self.save_interval_seconds = self.settings.config.operations.save_interval
+        self.training_interval_seconds = self.settings.config.operations.training_interval
         self.feature_scaler = self.load_scalers()
         self.model = self.load_model()
         self.training_data = deque(self.load_training_data(), maxlen=self.max_training_samples) # Initialize deque with loaded data and maxlen
@@ -532,7 +531,7 @@ class ContinuousAutoTrader:
         
         # Add volume SMA
         if 'volume' in df.columns:
-            df['volume_sma'] = df['volume'].rolling(window=self.settings.ml.volume_sma_period).mean() # Use settings for volume_sma_period
+            df['volume_sma'] = df['volume'].rolling(window=self.settings.config.ml.volume_sma_period).mean() # Use settings for volume_sma_period
         else:
             df['volume_sma'] = 0.0 # Default if volume is not available
         
@@ -558,16 +557,16 @@ class ContinuousAutoTrader:
         try:
             # Define the LSTM model
             model = tf.keras.Sequential([
-                tf.keras.layers.LSTM(self.settings.ml.lstm_units, return_sequences=True, input_shape=(self.settings.ml.sequence_length, self.settings.ml.feature_count)),
-                tf.keras.layers.Dropout(self.settings.ml.dropout_rate),
-                tf.keras.layers.LSTM(self.settings.ml.lstm_units, return_sequences=False),
-                tf.keras.layers.Dropout(self.settings.ml.dropout_rate),
-                tf.keras.layers.Dense(self.settings.ml.dense_units),
+                tf.keras.layers.LSTM(self.settings.config.ml.lstm_units, return_sequences=True, input_shape=(self.settings.config.ml.sequence_length, self.settings.config.ml.feature_count)),
+                tf.keras.layers.Dropout(self.settings.config.ml.dropout_rate),
+                tf.keras.layers.LSTM(self.settings.config.ml.lstm_units, return_sequences=False),
+                tf.keras.layers.Dropout(self.settings.config.ml.dropout_rate),
+                tf.keras.layers.Dense(self.settings.config.ml.dense_units),
                 tf.keras.layers.Dense(1, activation='sigmoid')  # Output layer
             ])
             
             # Compile the model
-            model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=self.settings.ml.learning_rate), loss='mse', metrics=['mae'])
+            model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=self.settings.config.ml.learning_rate), loss='mse', metrics=['mae'])
             
             # Log model summary
             model.summary(print_fn=lambda x: logger.info(x)) # Use print_fn to log summary
@@ -704,7 +703,7 @@ class ContinuousAutoTrader:
             if len(self.training_data) < self.sequence_length:
                 logger.warning(f"Not enough data for training. Need at least {self.sequence_length}, got {len(self.training_data)}")
                 # Return empty arrays with correct dimensions
-                return np.empty((0, self.sequence_length, self.settings.ml.feature_count)), np.empty((0,))
+                return np.empty((0, self.sequence_length, self.settings.config.ml.feature_count)), np.empty((0,))
             
             # Extract features and labels
             features, labels = [], []
@@ -748,7 +747,7 @@ class ContinuousAutoTrader:
             # X = np.reshape(X, (X.shape[0], X.shape[1], 1)) # This line is incorrect and should be removed
             
             # Train the model
-            history = self.model.fit(X, y, epochs=self.settings.ml.training_epochs, batch_size=self.settings.ml.batch_size, verbose=0) # Use settings for epochs and batch_size
+            history = self.model.fit(X, y, epochs=self.settings.config.ml.training_epochs, batch_size=self.settings.config.ml.batch_size, verbose=0) # Use settings for epochs and batch_size
             
             # Log the training
             logger.info("LSTM model trained successfully")
@@ -854,7 +853,7 @@ class ContinuousAutoTrader:
             model = tf.keras.models.load_model(self.model_filename)
             
             # Check if the loaded model has the correct input shape
-            expected_input_shape = (None, self.sequence_length, self.settings.ml.feature_count) # Use settings for feature_count
+            expected_input_shape = (None, self.sequence_length, self.settings.config.ml.feature_count) # Use settings for feature_count
             if model.input_shape[1:] != expected_input_shape[1:]:
                 logger.warning(f"Model input shape mismatch. Expected {expected_input_shape}, got {model.input_shape}. Creating new model.")
                 model = self.create_lstm_model()
@@ -915,7 +914,7 @@ class ContinuousAutoTrader:
             # This might need adjustment based on how the model was actually trained
             
             # Pad the scaled_features to match the sequence_length
-            padded_features = np.zeros((1, self.sequence_length, self.settings.ml.feature_count))
+            padded_features = np.zeros((1, self.sequence_length, self.settings.config.ml.feature_count))
             padded_features[0, -1, :] = scaled_features # Place the latest features at the end of the sequence
             
             prediction = self.model.predict(padded_features)[0][0]
@@ -1014,7 +1013,7 @@ class ContinuousAutoTrader:
 
     def should_train(self) -> bool:
         """Determine if the model should be retrained."""
-        return (time.time() - self.last_training_time) >= self.settings.operations.training_interval and len(self.training_data) >= self.settings.ml.sequence_length
+        return (time.time() - self.last_training_time) >= self.settings.config.operations.training_interval and len(self.training_data) >= self.settings.config.ml.sequence_length
 
     def run(self):
         """Main loop for the trading bot."""
@@ -1033,7 +1032,7 @@ class ContinuousAutoTrader:
                     continue
                 
                 # 2. Fit scalers if needed
-                if self.feature_scaler is None and len(self.training_data) >= self.settings.ml.sequence_length:
+                if self.feature_scaler is None and len(self.training_data) >= self.settings.config.ml.sequence_length:
                     self.fit_scalers()
                 
                 # 3. Train model if needed
