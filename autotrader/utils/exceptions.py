@@ -58,16 +58,24 @@ class APIError(AutotraderError):
         self,
         message: str,
         status_code: Optional[int] = None,
-        response_data: Optional[Dict[str, Any]] = None,
+        response_data: Optional[Any] = None,
         endpoint: Optional[str] = None,
-        context: Optional[Dict[str, Any]] = None # Add context parameter
+        context: Optional[Dict[str, Any]] = None
     ):
+        # Prioritize status_code from context if available
+        if context and "status_code" in context:
+            status_code = context["status_code"]
+        # Else, extract status_code from response_data if it's a Response object
+        elif hasattr(response_data, 'status_code'):
+            status_code = response_data.status_code
+            response_data = response_data.text # Store text content if it was a Response object
+
         # Merge specific API error context with general context
         full_context = {
             "status_code": status_code,
             "response_data": response_data,
             "endpoint": endpoint,
-            **(context or {}) # Merge provided context
+            **(context or {})
         }
         super().__init__(message, "API_ERROR", full_context)
         self.status_code = status_code

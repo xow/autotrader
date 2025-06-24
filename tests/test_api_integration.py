@@ -48,12 +48,12 @@ class TestAPIIntegration:
         mock_response_data = [
             {
                 "marketId": "BTC-AUD",
-                "lastPrice": "50000.00",
-                "volume24h": "150.75",
-                "bestBid": "49995.00",
-                "bestAsk": "50005.00",
-                "high24h": "51000.00",
-                "low24h": "49000.00"
+                "lastPrice": 50000.00, # Changed to float
+                "volume24h": 150.75,  # Changed to float
+                "bestBid": 49995.00,  # Changed to float
+                "bestAsk": 50005.00,  # Changed to float
+                "high24h": 51000.00,  # Changed to float
+                "low24h": 49000.00   # Changed to float
             }
         ]
         
@@ -104,7 +104,9 @@ class TestAPIIntegration:
             mock_response = Mock()
             mock_response.status_code = 404
             mock_response.text = "Not Found"
-            mock_response.raise_for_status.side_effect = requests.exceptions.HTTPError("404 Not Found", response=mock_response)
+            # Ensure the mock_response passed to HTTPError has a status_code
+            mock_response_for_http_error = Mock(status_code=404, text="Not Found")
+            mock_response.raise_for_status.side_effect = requests.exceptions.HTTPError("404 Not Found", response=mock_response_for_http_error)
             mock_get.return_value = mock_response
             
             with pytest.raises(APIError) as exc_info:
@@ -140,23 +142,33 @@ class TestAPIIntegration:
         # We'll simulate multiple failures and ensure the exception is raised.
         
         # Create a list of side effects: two HTTP errors, then a successful response
-        mock_responses = [
-            Mock(status_code=500, text="Internal Server Error", raise_for_status=Mock(side_effect=requests.exceptions.HTTPError("500 Error"))),
-            Mock(status_code=500, text="Internal Server Error", raise_for_status=Mock(side_effect=requests.exceptions.HTTPError("500 Error"))),
-            Mock(json=Mock(return_value=[{"marketId": "BTC-AUD", "lastPrice": 45000.0}]), raise_for_status=Mock(return_value=None))
-        ]
+        mock_responses = []
+        # First mock response: HTTP 500 error
+        mock_response_500_1 = Mock(status_code=500, text="Internal Server Error") # Set status_code directly
+        mock_response_500_1.raise_for_status.side_effect = requests.exceptions.HTTPError("500 Error", response=mock_response_500_1)
+        mock_responses.append(mock_response_500_1)
+
+        # Second mock response: HTTP 500 error
+        mock_response_500_2 = Mock(status_code=500, text="Internal Server Error") # Set status_code directly
+        mock_response_500_2.raise_for_status.side_effect = requests.exceptions.HTTPError("500 Error", response=mock_response_500_2)
+        mock_responses.append(mock_response_500_2)
+        
+        # Third mock response: successful
+        mock_response_success = Mock()
+        mock_response_success.json.return_value = [{"marketId": "BTC-AUD", "lastPrice": 45000.0}]
+        mock_response_success.raise_for_status.return_value = None
+        mock_responses.append(mock_response_success)
         
         with patch("requests.get", side_effect=mock_responses) as mock_get:
             # The first call should raise an APIError immediately
-            with pytest.raises(APIError):
+            with pytest.raises(APIError) as exc_info:
                 isolated_trader.fetch_market_data()
             
-            # The mock_get should have been called once for the first failure
+            assert exc_info.value.status_code == 500
             assert mock_get.call_count == 1
             
-            # If there was an external retry mechanism, it would call fetch_market_data again.
-            # For this test, we just confirm the immediate exception.
-            # To test actual backoff, the test would need to wrap the main loop's retry logic.
+            # To test exponential backoff, we would need to simulate the retry loop.
+            # For now, we confirm the immediate exception on the first call.
     
     def test_data_extraction_btc_aud_market(self, isolated_trader):
         """Test extraction of BTC-AUD market data from API response."""
@@ -241,9 +253,7 @@ class TestAPIIntegration:
             call_count += 1
             if call_count <= 2:
                 # Simulate rate limiting
-                response = Mock()
-                response.status_code = 429 # Set status code for the mock response
-                response.text = "Too Many Requests"
+                response = Mock(status_code=429, text="Too Many Requests") # Set status_code directly
                 response.raise_for_status.side_effect = requests.exceptions.HTTPError("429 Too Many Requests", response=response)
                 return response
             else:
