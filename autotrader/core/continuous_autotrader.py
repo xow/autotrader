@@ -293,6 +293,7 @@ class ContinuousAutoTrader:
             with open(self.scaler_filename, 'rb') as f:
                 scalers = pickle.load(f)
                 self.feature_scaler = scalers['feature_scaler']
+                self.scalers_fitted = True # Set to True on successful load
             logger.info("Scalers loaded successfully")
         except FileNotFoundError:
             logger.info("No scalers file found, creating new scalers")
@@ -351,8 +352,8 @@ class ContinuousAutoTrader:
         except json.JSONDecodeError as e:
             logger.error("Failed to decode JSON response from API", error=str(e), response_text=response.text if 'response' in locals() else 'N/A')
             raise DataError("Invalid JSON response from API", data_type="market_data", validation_errors={"json_decode_error": str(e)}) from e
-        except Exception as e:
-            logger.error("An unexpected error occurred while fetching market data", error=str(e), exc_info=True)
+        except (requests.exceptions.RequestException, json.JSONDecodeError) as e:
+            logger.error("An error occurred while fetching or processing market data", error=str(e), exc_info=True)
             return []
 
     def extract_comprehensive_data(self, market_data: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
@@ -751,7 +752,7 @@ class ContinuousAutoTrader:
                 return False
             
             # The data is already in the correct shape (samples, timesteps, features)
-            # X = np.reshape(X, (X.shape[0], X.shape[1], 1)) # This line is incorrect and should be removed
+            # Removed incorrect reshape: X = np.reshape(X, (X.shape[0], X.shape[1], 1))
             
             # Train the model
             history = self.model.fit(X, y, epochs=self.settings.training_epochs, batch_size=self.settings.batch_size, verbose=0) # Use settings for epochs and batch_size

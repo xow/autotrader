@@ -70,7 +70,7 @@ def sample_training_data():
         spread = np.random.uniform(5, 20)
         
         data_point = {
-            "timestamp": (datetime.now() - timedelta(minutes=i)).timestamp() * 1000, # Unix timestamp in milliseconds
+            "timestamp": (datetime.now() - timedelta(minutes=i)).isoformat() + "Z", # ISO 8601 format with 'Z' for UTC
             "price": float(price),
             "volume": float(volume),
             "bid": float(price - spread/2),
@@ -102,12 +102,12 @@ def mock_requests():
         mock_response.json.return_value = [
             {
                 "marketId": "BTC-AUD",
-                "lastPrice": 45000.50,
-                "volume24h": 123.45,
-                "bestBid": 44995.00,
-                "bestAsk": 45005.00,
-                "high24h": 46000.00,
-                "low24h": 44000.00
+                "lastPrice": 45000.50, # Ensure this is float
+                "volume24h": 123.45,  # Ensure this is float
+                "bestBid": 44995.00,  # Ensure this is float
+                "bestAsk": 45005.00,  # Ensure this is float
+                "high24h": 46000.00,  # Ensure this is float
+                "low24h": 44000.00   # Ensure this is float
             }
         ]
         mock_response.raise_for_status.return_value = None
@@ -215,13 +215,13 @@ def isolated_trader(temp_dir, test_config, mock_logging):
         mock_response.json.return_value = [
             {
                 "marketId": "BTC-AUD",
-                "lastPrice": 45000.50,
-                "volume24h": 123.45,
-                "bestBid": 44995.00,
-                "bestAsk": 45005.00,
-                "high24h": 46000.00,
-                "low24h": 44000.00,
-                "timestamp": int(datetime.now().timestamp() * 1000) # Add timestamp
+                "lastPrice": 45000.50, # Ensure this is float
+                "volume24h": 123.45,  # Ensure this is float
+                "bestBid": 44995.00,  # Ensure this is float
+                "bestAsk": 45005.00,  # Ensure this is float
+                "high24h": 46000.00,  # Ensure this is float
+                "low24h": 44000.00,   # Ensure this is float
+                "timestamp": datetime.now().isoformat() + "Z" # ISO 8601 format with 'Z' for UTC
             }
         ]
         mock_response.raise_for_status.return_value = None

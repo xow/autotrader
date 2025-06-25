@@ -67,8 +67,8 @@ class TestContinuousAutoTrader:
             mock_settings_instance.config.ml.learning_rate = 0.001
             mock_settings_instance.config.ml.dense_units = 25
             mock_settings_instance.config.ml.feature_count = 12
-            mock_settings_instance.config.ml.training_epochs = 10
-            mock_settings_instance.config.ml.batch_size = 16
+            mock_settings_instance.training_epochs = 10
+            mock_settings_instance.batch_size = 16
             mock_settings_instance.config.ml.volume_sma_period = 10 # Add this if it's accessed
             
             mock_settings_instance.config.operations = Mock()
@@ -431,7 +431,7 @@ class TestContinuousAutoTrader:
     def test_error_handling_network_failure(self, isolated_trader):
         """Test error handling during network failures."""
         with patch("requests.get") as mock_get:
-            mock_get.side_effect = NetworkError("Network error") # Raise specific exception
+            mock_get.side_effect = requests.exceptions.ConnectionError("Network error") # Raise specific exception
             
             with pytest.raises(NetworkError): # Expect the specific exception
                 isolated_trader.fetch_market_data()

@@ -42,7 +42,7 @@ class Settings:
             self._config = load_config()
             logger.info(f"Settings loaded for environment: {self._config.environment.value}")
         except Exception as e:
-            logger.error(f"Failed to load configuration: {e}")
+            logger.error("Failed to load configuration", exc_info=e)
             # Fall back to default configuration
             self._config = Config()
             logger.info("Using default configuration")

@@ -35,7 +35,7 @@ class TestAPIIntegration:
                 raise
             
             # Verify the URL and params were called correctly
-            expected_url = isolated_trader.settings.api.base_url + "/markets/tickers"
+            expected_url = isolated_trader.settings.api_base_url + "/markets/tickers"
             expected_params = {"marketId": "BTC-AUD"}
             mock_get.assert_called_once_with(
                 expected_url,
