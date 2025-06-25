@@ -135,21 +135,15 @@ class TestConfig:
 class TestSettings:
     """Test the Settings singleton class"""
     
-    def test_settings_singleton(self):
+    def test_settings_singleton(self, reset_settings_singleton):
         """Test that Settings implements singleton pattern."""
-        # Ensure a fresh instance is created for this test
-        Settings._instance = None
-        Settings._config = None
+        # The reset_settings_singleton fixture handles ensuring a fresh instance.
 
         settings1 = Settings()
         settings2 = Settings()
         
         assert settings1 is settings2
         assert get_settings() is settings1
-        
-        # Clean up for subsequent tests (though autouse fixture should handle this)
-        Settings._instance = None
-        Settings._config = None
     
     def test_settings_properties(self):
         """Test settings property access"""

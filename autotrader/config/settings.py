@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Optional
 import logging
 
-from .config import Config, Environment, load_config
+from .config import Config, Environment, load_config, APIConfig, TradingConfig, MLConfig, OperationalConfig
 
 logger = logging.getLogger(__name__)
 
@@ -163,11 +163,20 @@ class Settings:
         return self.config.trading.risk_per_trade
     
     # ML Settings
+    @property
+    def ml(self) -> MLConfig:
+        """ML configuration"""
+        return self.config.ml
     
     @property
     def model_filename(self) -> str:
         """ML model filename"""
         return self.config.ml.model_filename
+
+    @property
+    def scalers_filename(self) -> str:
+        """ML scalers filename"""
+        return self.config.ml.scalers_filename
     
     @property
     def sequence_length(self) -> int:
@@ -183,11 +192,26 @@ class Settings:
     def lstm_units(self) -> int:
         """Number of LSTM units"""
         return self.config.ml.lstm_units
-    
+
+    @property
+    def dropout_rate(self) -> float:
+        """ML model dropout rate"""
+        return self.config.ml.dropout_rate
+
     @property
     def learning_rate(self) -> float:
         """ML model learning rate"""
         return self.config.ml.learning_rate
+
+    @property
+    def dense_units(self) -> int:
+        """Number of dense units in ML model"""
+        return self.config.ml.dense_units
+
+    @property
+    def feature_count(self) -> int:
+        """Number of features for ML model"""
+        return self.config.ml.feature_count
     
     @property
     def training_epochs(self) -> int:
@@ -198,8 +222,17 @@ class Settings:
     def batch_size(self) -> int:
         """Training batch size"""
         return self.config.ml.batch_size
+
+    @property
+    def volume_sma_period(self) -> int:
+        """Volume SMA period for technical indicators"""
+        return self.config.ml.volume_sma_period
     
     # Operational Settings
+    @property
+    def operations(self) -> OperationalConfig:
+        """Operational configuration"""
+        return self.config.operations
     
     @property
     def data_collection_interval(self) -> int:
@@ -235,6 +268,11 @@ class Settings:
     def state_filename(self) -> str:
         """Trader state filename"""
         return self.config.operations.state_filename
+
+    @property
+    def enable_detailed_logging(self) -> bool:
+        """Enable detailed logging"""
+        return self.config.operations.enable_detailed_logging
     
     def save_config(self, config_path: Optional[str] = None):
         """Save current configuration to file"""
