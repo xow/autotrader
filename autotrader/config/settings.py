@@ -259,7 +259,7 @@ class Settings:
             elif env == Environment.DEVELOPMENT:
                 config.operations.log_level = "DEBUG"
                 config.operations.enable_detailed_logging = True
-                config.trading.initial_balance = 1000.0  # Smaller test balance
+                # Removed hardcoded initial_balance for development to allow env var override
             
             config_path = config_dir / f"config_{env.value}.json"
             config.to_file(config_path)

@@ -132,22 +132,23 @@ class ContinuousAutoTrader:
             self.model = self.create_lstm_model()
         
         # Log configuration details
-        logger.info("AutoTrader initialized",
-                    initial_balance=self.balance,
-                    confidence_threshold=self.confidence_threshold,
-                    rsi_oversold=self.rsi_oversold,
-                    rsi_overbought=self.rsi_overbought,
-                    trade_amount=self.trade_amount,
-                    fee_rate=self.fee_rate,
-                    max_position_size=self.max_position_size,
-                    risk_per_trade=self.risk_per_trade,
-                    model_filename=self.model_filename,
-                    scaler_filename=self.scaler_filename,
-                    state_filename=self.state_filename,
-                    sequence_length=self.sequence_length,
-                    min_data_points=self.min_data_points,
-                    limited_run=self.limited_run,
-                    run_iterations=self.run_iterations)
+        logger.info("AutoTrader initialized", **{
+            "initial_balance": self.balance,
+            "confidence_threshold": self.confidence_threshold,
+            "rsi_oversold": self.rsi_oversold,
+            "rsi_overbought": self.rsi_overbought,
+            "trade_amount": self.trade_amount,
+            "fee_rate": self.fee_rate,
+            "max_position_size": self.max_position_size,
+            "risk_per_trade": self.risk_per_trade,
+            "model_filename": self.model_filename,
+            "scaler_filename": self.scaler_filename,
+            "state_filename": self.state_filename,
+            "sequence_length": self.sequence_length,
+            "min_data_points": self.min_data_points,
+            "limited_run": self.limited_run,
+            "run_iterations": self.run_iterations
+        })
         
         # Log the number of training samples
         logger.info(f"Loaded {len(self.training_data)} training samples")
@@ -229,6 +230,12 @@ class ContinuousAutoTrader:
         # Log the initial model summary logged
         logger.info(f"Initial model summary logged: {self._model_summary_logged}")
         
+    def _setup_signal_handlers(self):
+        """Set up signal handlers for graceful shutdown."""
+        signal.signal(signal.SIGINT, self._signal_handler)
+        signal.signal(signal.SIGTERM, self._signal_handler)
+        logger.debug("Signal handlers set up.")
+
     def _signal_handler(self, signum, frame):
         """Handle signals for graceful shutdown."""
         logger.info(f"Signal {signum} received, initiating graceful shutdown.")
@@ -289,16 +296,18 @@ class ContinuousAutoTrader:
             logger.info("Scalers loaded successfully")
         except FileNotFoundError:
             logger.info("No scalers file found, creating new scalers")
+            self.feature_scaler = StandardScaler() # Initialize a new scaler
         except Exception as e:
             logger.error(f"Error loading scalers: {e}")
+            self.feature_scaler = StandardScaler() # Initialize a new scaler on error
         return self.feature_scaler # Return the loaded scaler or a new one
 
     def fetch_market_data(self) -> List[Dict[str, Any]]:
         """Fetch market data from the BTCMarkets API."""
         try:
-            url = self.settings.api.base_url + "/markets/tickers" # Use settings for base URL and tickers endpoint
+            url = self.settings.config.api.base_url + "/markets/tickers" # Use settings for base URL and tickers endpoint
             params = {"marketId": "BTC-AUD"} # Add marketId parameter
-            response = requests.get(url, params=params, timeout=self.settings.api.timeout) # Use settings for timeout
+            response = requests.get(url, params=params, timeout=self.settings.config.api.timeout) # Use settings for timeout
             response.raise_for_status()  # Raise HTTPError for bad responses (4xx or 5xx)
             
             market_data = response.json()
@@ -436,7 +445,7 @@ class ContinuousAutoTrader:
         
         return float(rsi)
 
-    def calculate_technical_indicators(self, market_data: List[Dict[str, Any]], prices: Optional[np.ndarray] = None, volumes: Optional[np.ndarray] = None) -> List[Dict[str, Any]]:
+    def calculate_technical_indicators(self, market_data: Optional[List[Dict[str, Any]]] = None, prices: Optional[np.ndarray] = None, volumes: Optional[np.ndarray] = None) -> List[Dict[str, Any]]:
         """
         Calculate technical indicators for each data point.
         
@@ -893,8 +902,13 @@ class ContinuousAutoTrader:
         try:
             if not self.model or not self.feature_scaler:
                 logger.warning("Model or scaler not available for prediction, returning HOLD signal.")
-                return {"signal": "HOLD", "confidence": 0.5, "price": latest_data.get('price', 0.0), "rsi": latest_data.get('rsi', 50.0)}
+                return {"signal": "HOLD", "confidence": 0.5, "price": latest_data.get('price', 0.0) if isinstance(latest_data, dict) else 0.0, "rsi": latest_data.get('rsi', 50.0) if isinstance(latest_data, dict) else 50.0}
             
+            # Ensure latest_data is a dictionary before proceeding
+            if not isinstance(latest_data, dict):
+                logger.warning(f"Invalid latest_data format for prediction: {type(latest_data)}. Expected dict, returning HOLD signal.")
+                return {"signal": "HOLD", "confidence": 0.5, "price": 0.0, "rsi": 50.0}
+
             # Prepare features for prediction
             features = self.prepare_features(latest_data)
             
@@ -928,9 +942,9 @@ class ContinuousAutoTrader:
             if price_for_prediction == 0.0 and latest_data.get('lastPrice') is not None:
                 price_for_prediction = float(latest_data['lastPrice'])
 
-            if confidence > self.settings.trading.buy_confidence_threshold:
+            if confidence > self.settings.config.trading.buy_confidence_threshold:
                 signal = "BUY"
-            elif confidence < self.settings.trading.sell_confidence_threshold:
+            elif confidence < self.settings.config.trading.sell_confidence_threshold:
                 signal = "SELL"
             
             logger.info(f"Prediction: {prediction:.4f}, Signal: {signal}, Confidence: {confidence:.4f}")
@@ -967,14 +981,14 @@ class ContinuousAutoTrader:
         
         # Apply RSI override
         if rsi is not None:
-            if rsi > self.settings.trading.rsi_overbought and signal_type == "BUY":
+            if rsi > self.settings.config.trading.rsi_overbought and signal_type == "BUY":
                 logger.info(f"RSI ({rsi:.2f}) is overbought, overriding BUY signal to HOLD.")
                 signal_type = "HOLD"
-            elif rsi < self.settings.trading.rsi_oversold and signal_type == "SELL":
+            elif rsi < self.settings.config.trading.rsi_oversold and signal_type == "SELL":
                 logger.info(f"RSI ({rsi:.2f}) is oversold, overriding SELL signal to HOLD.")
                 signal_type = "HOLD"
         
-        if signal_type == "BUY" and confidence > self.settings.trading.buy_confidence_threshold:
+        if signal_type == "BUY" and confidence > self.settings.config.trading.buy_confidence_threshold:
             # Check if we have enough balance to buy
             cost = self.trade_amount * current_price * (1 + self.fee_rate)
             if self.balance >= cost:
@@ -986,7 +1000,7 @@ class ContinuousAutoTrader:
             else:
                 logger.warning(f"Insufficient balance to BUY. Needed {cost:.2f} AUD, Have {self.balance:.2f} AUD.")
         
-        elif signal_type == "SELL" and confidence < self.settings.trading.sell_confidence_threshold:
+        elif signal_type == "SELL" and confidence < self.settings.config.trading.sell_confidence_threshold:
             # Check if we have enough position to sell
             if self.position_size >= self.trade_amount:
                 revenue = self.trade_amount * current_price * (1 - self.fee_rate)
@@ -1009,7 +1023,7 @@ class ContinuousAutoTrader:
 
     def should_save(self) -> bool:
         """Determine if the model and state should be saved."""
-        return (time.time() - self.last_save_time) >= self.settings.operations.save_interval
+        return (time.time() - self.last_save_time) >= self.settings.config.operations.save_interval
 
     def should_train(self) -> bool:
         """Determine if the model should be retrained."""
@@ -1027,7 +1041,7 @@ class ContinuousAutoTrader:
                 # 1. Collect and store data
                 if not self.collect_and_store_data():
                     logger.warning("Failed to collect and store data. Skipping iteration.")
-                    time.sleep(self.settings.operations.data_collection_interval) # Wait before retrying
+                    time.sleep(self.settings.config.operations.data_collection_interval) # Wait before retrying
                     iteration_count += 1
                     continue
                 
@@ -1047,7 +1061,7 @@ class ContinuousAutoTrader:
                 # 4. Get latest data point for prediction
                 if not self.training_data:
                     logger.warning("No training data available for prediction. Skipping trade signal generation.")
-                    time.sleep(self.settings.operations.data_collection_interval)
+                    time.sleep(self.settings.config.operations.data_collection_interval)
                     iteration_count += 1
                     continue
                 
@@ -1066,11 +1080,11 @@ class ContinuousAutoTrader:
                     self.last_save_time = time.time()
                 
                 iteration_count += 1
-                time.sleep(self.settings.operations.data_collection_interval) # Wait for next iteration
+                time.sleep(self.settings.config.operations.data_collection_interval) # Wait for next iteration
                 
             except Exception as e:
                 logger.exception(f"An unexpected error occurred during main loop: {e}")
-                time.sleep(self.settings.operations.data_collection_interval) # Wait before retrying
+                time.sleep(self.settings.config.operations.data_collection_interval) # Wait before retrying
         
         logger.info("AutoTrader bot stopped.")
         self.save_state()

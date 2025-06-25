@@ -84,6 +84,7 @@ class MLConfig:
     # Feature configuration
     feature_count: int = 12
     enable_technical_indicators: bool = True
+    volume_sma_period: int = 10 # Default period for volume SMA
 
 
 @dataclass

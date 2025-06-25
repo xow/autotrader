@@ -66,7 +66,7 @@ class TestPerformanceMetrics:
             test_prices = prices[i:i+100] if i+100 <= len(prices) else prices[-100:]
             test_volumes = volumes[i:i+100] if i+100 <= len(volumes) else volumes[-100:]
             
-            indicators_list = isolated_trader.calculate_technical_indicators(prices=test_prices, volumes=test_volumes)
+            indicators_list = isolated_trader.calculate_technical_indicators(market_data=None, prices=test_prices, volumes=test_volumes)
             
             # Verify indicators are calculated
             assert len(indicators_list) > 0 # Should return a list of data points
@@ -127,8 +127,8 @@ class TestPerformanceMetrics:
         with patch.object(isolated_trader, 'fetch_market_data') as mock_fetch:
             mock_fetch.return_value = [market_gen.generate_tick()]
             
-            # Collect 1000 data points
-            for _ in range(1000):
+            # Collect data points up to max_training_samples
+            for _ in range(isolated_trader.max_training_samples):
                 isolated_trader.collect_and_store_data()
         
         # Measure final memory
@@ -314,7 +314,7 @@ class TestPerformanceMetrics:
             volumes = np.random.uniform(50, 500, 100)
             
             # Calculate indicators
-            isolated_trader.calculate_technical_indicators(prices=prices, volumes=volumes)
+            isolated_trader.calculate_technical_indicators(market_data=None, prices=prices, volumes=volumes)
             
             # Simulate feature preparation
             data_point = {

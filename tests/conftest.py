@@ -150,31 +150,87 @@ def mock_file_operations(temp_dir):
 
 
 @pytest.fixture
-def isolated_trader(temp_dir, test_config, mock_logging): # Add mock_logging as a dependency
-    """Create an isolated trader instance for testing."""
-    # Change to temp directory for isolated file operations
+def isolated_trader(temp_dir, test_config, mock_logging):
+    """Create an isolated trader instance for testing with a mocked Settings object."""
     original_cwd = os.getcwd()
     os.chdir(temp_dir)
 
-    # Import the ContinuousAutoTrader class
-    from autotrader.core.continuous_autotrader import ContinuousAutoTrader # Import from new location
-    import autotrader.core.continuous_autotrader as trader_module # Import the module to patch its logger
+    from autotrader.core.continuous_autotrader import ContinuousAutoTrader
+    import autotrader.core.continuous_autotrader as trader_module
+    from autotrader.config.settings import Settings, get_settings
 
-    # Patch the logger within the trader module
-    with patch.object(trader_module, 'logger', mock_logging):
-        # Create a trader instance. It will use its internal MockSettings.
-        trader = ContinuousAutoTrader()
+    # Create a mock Settings instance with nested config objects
+    mock_settings_instance = Mock(spec=Settings)
+    mock_settings_instance.config = Mock()
+    mock_settings_instance.config.api = Mock()
+    mock_settings_instance.config.trading = Mock()
+    mock_settings_instance.config.ml = Mock()
+    mock_settings_instance.config.operations = Mock()
+
+    # Set default values for mocked settings based on test_config or common defaults
+    mock_settings_instance.initial_balance = test_config["initial_balance"]
+    mock_settings_instance.config.trading.initial_balance = test_config["initial_balance"]
+    mock_settings_instance.config.trading.trade_amount = 0.01
+    mock_settings_instance.config.trading.fee_rate = 0.001
+    mock_settings_instance.config.trading.market_pair = "BTC-AUD"
+    mock_settings_instance.config.trading.buy_confidence_threshold = 0.65
+    mock_settings_instance.config.trading.sell_confidence_threshold = 0.35
+    mock_settings_instance.config.trading.rsi_overbought = 80.0
+    mock_settings_instance.config.trading.rsi_oversold = 20.0
+    mock_settings_instance.config.trading.max_position_size = 0.1
+    mock_settings_instance.config.trading.risk_per_trade = 0.02
+
+    mock_settings_instance.config.ml.model_filename = "autotrader_model.keras"
+    mock_settings_instance.config.ml.scalers_filename = "scalers.pkl"
+    mock_settings_instance.config.ml.sequence_length = test_config["sequence_length"]
+    mock_settings_instance.config.ml.max_training_samples = test_config["max_training_samples"]
+    mock_settings_instance.config.ml.lstm_units = 50
+    mock_settings_instance.config.ml.dropout_rate = 0.2
+    mock_settings_instance.config.ml.learning_rate = 0.001
+    mock_settings_instance.config.ml.dense_units = 25
+    mock_settings_instance.config.ml.epochs = 10
+    mock_settings_instance.config.ml.batch_size = 16
+    mock_settings_instance.config.ml.feature_count = 12
+    mock_settings_instance.config.ml.volume_sma_period = 10 # Assuming a default value
+
+    mock_settings_instance.config.operations.data_collection_interval = 60
+    mock_settings_instance.config.operations.save_interval = test_config["save_interval_seconds"]
+    mock_settings_instance.config.operations.training_interval = test_config["training_interval_seconds"]
+    mock_settings_instance.config.operations.log_level = "INFO"
+    mock_settings_instance.config.operations.log_file = "autotrader.log"
+    mock_settings_instance.config.operations.training_data_filename = "training_data.json"
+    mock_settings_instance.config.operations.state_filename = "trader_state.pkl"
+
+    mock_settings_instance.config.api.base_url = "https://api.btcmarkets.net/v3"
+    mock_settings_instance.config.api.timeout = 10
+    mock_settings_instance.config.api.max_retries = 3
+
+    # Patch get_settings to return our mock instance
+    with patch('autotrader.config.settings.get_settings', return_value=mock_settings_instance), \
+         patch.object(trader_module, 'logger', mock_logging), \
+         patch('requests.get') as mock_requests_get: # Patch requests.get here
         
-        # Override specific settings if needed for a particular test scenario
-        # For example, if a test needs a specific initial balance:
-        trader.balance = test_config["initial_balance"]
-        trader.save_interval_seconds = test_config["save_interval_seconds"]
-        trader.training_interval_seconds = test_config["training_interval_seconds"]
-        trader.sequence_length = test_config["sequence_length"]
-        # Use the max_training_samples from the test_config
-        trader.max_training_samples = test_config["max_training_samples"]
-        # Ensure the deque is initialized with the correct maxlen
-        trader.training_data = deque(maxlen=trader.max_training_samples)
+        # Configure mock_requests_get if needed for specific tests
+        mock_response = Mock()
+        mock_response.json.return_value = [
+            {
+                "marketId": "BTC-AUD",
+                "lastPrice": 45000.50,
+                "volume24h": 123.45,
+                "bestBid": 44995.00,
+                "bestAsk": 45005.00,
+                "high24h": 46000.00,
+                "low24h": 44000.00,
+                "timestamp": int(datetime.now().timestamp() * 1000) # Add timestamp
+            }
+        ]
+        mock_response.raise_for_status.return_value = None
+        mock_requests_get.return_value = mock_response
+
+        trader = ContinuousAutoTrader()
+        # The trader's attributes are now initialized from the mocked settings
+        # No need to override them directly here unless a test specifically requires it
+        trader.training_data = deque(maxlen=trader.max_training_samples) # Ensure deque is initialized
 
         yield trader
 
@@ -214,10 +270,23 @@ def prediction_test_data():
 
 @pytest.fixture
 def mock_logging():
-    """Mock logging for testing."""
-    with patch("logging.getLogger") as mock_logger_factory:
-        mock_logger = Mock()
-        mock_logger_factory.return_value = mock_logger
+    """Mock logging for testing, capturing structured log messages."""
+    with patch("structlog.get_logger") as mock_get_logger:
+        mock_logger = MagicMock()
+        mock_get_logger.return_value = mock_logger
+
+        # Configure the mock logger to capture all arguments
+        def _mock_log_method(event, *args, **kwargs):
+            mock_logger.calls.append({"event": event, "args": args, "kwargs": kwargs})
+
+        mock_logger.info.side_effect = _mock_log_method
+        mock_logger.debug.side_effect = _mock_log_method
+        mock_logger.warning.side_effect = _mock_log_method
+        mock_logger.error.side_effect = _mock_log_method
+        mock_logger.exception.side_effect = _mock_log_method
+
+        mock_logger.calls = [] # Initialize a list to store calls
+
         yield mock_logger
 
 
@@ -237,6 +306,17 @@ def setup_test_environment():
     # Cleanup after test
     if "TF_CPP_MIN_LOG_LEVEL" in os.environ:
         del os.environ["TF_CPP_MIN_LOG_LEVEL"]
+
+
+@pytest.fixture() # Removed autouse=True
+def reset_settings_singleton():
+    """Reset the Settings singleton before each test to ensure a clean state."""
+    from autotrader.config.settings import Settings
+    Settings._instance = None
+    Settings._config = None
+    yield
+    Settings._instance = None
+    Settings._config = None
 
 
 # Utility fixtures for specific test scenarios
