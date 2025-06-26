@@ -94,7 +94,7 @@ class TestTradingSimulation:
         # Test low confidence BUY signal
         low_confidence_buy = {
             "signal": "BUY",
-            "confidence": isolated_trader.settings.trading.buy_confidence_threshold - 0.01,  # Just below threshold
+            "confidence": isolated_trader.settings.buy_confidence_threshold - 0.01,  # Just below threshold
             "price": 45000.0,
             "rsi": 50.0
         }
@@ -105,7 +105,7 @@ class TestTradingSimulation:
         # Test low confidence SELL signal
         low_confidence_sell = {
             "signal": "SELL",
-            "confidence": isolated_trader.settings.trading.sell_confidence_threshold + 0.01,  # Just above threshold
+            "confidence": isolated_trader.settings.sell_confidence_threshold + 0.01,  # Just above threshold
             "price": 45000.0,
             "rsi": 50.0
         }
@@ -121,7 +121,7 @@ class TestTradingSimulation:
             "signal": "BUY",
             "confidence": 0.9,  # High confidence
             "price": 45000.0,
-            "rsi": isolated_trader.settings.trading.rsi_overbought + 5.0  # Overbought
+            "rsi": isolated_trader.settings.rsi_overbought + 5.0  # Overbought
         }
         
         isolated_trader.execute_simulated_trade(overbought_buy_signal)
@@ -137,7 +137,7 @@ class TestTradingSimulation:
             "signal": "SELL",
             "confidence": 0.1,  # Low confidence (should trigger SELL)
             "price": 45000.0,
-            "rsi": isolated_trader.settings.trading.rsi_oversold - 5.0  # Oversold
+            "rsi": isolated_trader.settings.rsi_oversold - 5.0  # Oversold
         }
         
         isolated_trader.execute_simulated_trade(oversold_sell_signal)
@@ -299,9 +299,21 @@ class TestTradingSimulation:
         # Should have logged the trade execution
         mock_logging.info.assert_called()
         # Check for specific log message
-        mock_logging.info.assert_any_call(
-            f"BUY executed: {isolated_trader.trade_amount:.4f} BTC at {buy_signal['price']:.2f} AUD. New balance: {isolated_trader.balance:.2f} AUD, Position: {isolated_trader.position_size:.4f} BTC"
-        )
+        # Check for specific log message by inspecting the captured calls
+        # We need to iterate through the calls to find the one that matches
+        found_log = False
+        for call_info in mock_logging.calls:
+            if call_info.get("event") == "BUY executed":
+                # Check if the relevant kwargs are present and approximately correct
+                if (
+                    abs(call_info["kwargs"].get("amount", 0) - isolated_trader.trade_amount) < 1e-9 and
+                    abs(call_info["kwargs"].get("price", 0) - buy_signal['price']) < 1e-9 and
+                    abs(call_info["kwargs"].get("new_balance", 0) - isolated_trader.balance) < 1e-9 and
+                    abs(call_info["kwargs"].get("position", 0) - isolated_trader.position_size) < 1e-9
+                ):
+                    found_log = True
+                    break
+        assert found_log, "BUY executed log message not found or incorrect"
     
     def test_portfolio_balance_tracking(self, isolated_trader):
         """Test portfolio balance tracking across multiple trades."""

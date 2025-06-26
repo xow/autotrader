@@ -14,6 +14,7 @@ import time # Import time
 from collections import deque # Import deque
 from sklearn.preprocessing import StandardScaler # Import StandardScaler
 from autotrader.utils.exceptions import NetworkError # Import NetworkError
+import requests # Import requests for mocking exceptions
 
 # Import the autotrader module
 import sys
@@ -39,11 +40,8 @@ class TestContinuousAutoTrader:
     def test_initialization_custom_balance(self, mock_file_operations):
         """Test trader initialization with custom balance."""
         custom_balance = 50000.0
-        with patch('autotrader.config.settings.get_settings') as mock_get_settings:
-            mock_settings_instance = Mock()
+        with patch('autotrader.config.settings.settings') as mock_settings_instance:
             mock_settings_instance.initial_balance = custom_balance
-            mock_get_settings.return_value = mock_settings_instance
-            
             # Ensure other necessary settings attributes are mocked if accessed by ContinuousAutoTrader
             mock_settings_instance.buy_confidence_threshold = 0.65
             mock_settings_instance.rsi_oversold = 20
@@ -57,24 +55,23 @@ class TestContinuousAutoTrader:
             mock_settings_instance.state_filename = "trader_state.pkl"
             
             # Mock the nested config.ml and config.operations attributes
-            mock_settings_instance.config = Mock()
-            mock_settings_instance.config.ml = Mock()
-            mock_settings_instance.config.ml.scalers_filename = "scalers.pkl"
-            mock_settings_instance.config.ml.sequence_length = 20
-            mock_settings_instance.config.ml.max_training_samples = 2000
-            mock_settings_instance.config.ml.lstm_units = 50
-            mock_settings_instance.config.ml.dropout_rate = 0.2
-            mock_settings_instance.config.ml.learning_rate = 0.001
-            mock_settings_instance.config.ml.dense_units = 25
-            mock_settings_instance.config.ml.feature_count = 12
-            mock_settings_instance.training_epochs = 10
-            mock_settings_instance.batch_size = 16
-            mock_settings_instance.config.ml.volume_sma_period = 10 # Add this if it's accessed
+            mock_settings_instance.ml = Mock() # Direct access to ml
+            mock_settings_instance.ml.scalers_filename = "scalers.pkl"
+            mock_settings_instance.ml.sequence_length = 20
+            mock_settings_instance.ml.max_training_samples = 2000
+            mock_settings_instance.ml.lstm_units = 50
+            mock_settings_instance.ml.dropout_rate = 0.2
+            mock_settings_instance.ml.learning_rate = 0.001
+            mock_settings_instance.ml.dense_units = 25
+            mock_settings_instance.ml.feature_count = 12
+            mock_settings_instance.training_epochs = 10 # Direct access
+            mock_settings_instance.batch_size = 16 # Direct access
+            mock_settings_instance.ml.volume_sma_period = 10 # Add this if it's accessed
             
-            mock_settings_instance.config.operations = Mock()
-            mock_settings_instance.config.operations.save_interval = 1800
-            mock_settings_instance.config.operations.training_interval = 600
-            mock_settings_instance.config.operations.data_collection_interval = 60
+            mock_settings_instance.operations = Mock() # Direct access to operations
+            mock_settings_instance.operations.save_interval = 1800
+            mock_settings_instance.operations.training_interval = 600
+            mock_settings_instance.operations.data_collection_interval = 60
             
             trader = ContinuousAutoTrader()
         

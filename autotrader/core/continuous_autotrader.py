@@ -16,17 +16,6 @@ import structlog
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 import pandas as pd
 
-# Configure structured logging
-structlog.configure(
-    processors=[
-        structlog.processors.TimeStamper(fmt="iso"),
-        structlog.processors.JSONRenderer()
-    ],
-    context_class=dict,
-    logger_factory=structlog.PrintLoggerFactory()
-)
-logger = structlog.get_logger()
-
 # Constants
 DEFAULT_CONFIG = {
     "confidence_threshold": 0.1,
@@ -55,11 +44,8 @@ logging.basicConfig(
     ]
 )
 
-# Set log level for all loggers to DEBUG
-for logger_name in logging.root.manager.loggerDict:
-    logging.getLogger(logger_name).setLevel(logging.DEBUG)
-logger = logging.getLogger(__name__)
-
+# Get the logger instance after basicConfig
+logger = structlog.get_logger(__name__)
 
 # Import the Settings singleton
 from autotrader.config.settings import get_settings
@@ -260,7 +246,7 @@ class ContinuousAutoTrader:
                 }, f)
             logger.info("Trader state saved successfully")
         except Exception as e:
-            logger.error("Error saving trader state", error=str(e))
+            logger.error("Error saving trader state", exc_info=e)
 
     def load_state(self):
         """Load the trader state from a file."""
@@ -274,7 +260,7 @@ class ContinuousAutoTrader:
         except FileNotFoundError:
             logger.info("No trader state file found, starting fresh")
         except Exception as e:
-            logger.error("Error loading trader state", error=str(e))
+            logger.error("Error loading trader state", exc_info=e)
 
     def save_scalers(self):
         """Save the scalers to a file."""
@@ -285,7 +271,7 @@ class ContinuousAutoTrader:
                 }, f)
             logger.info("Scalers saved successfully")
         except Exception as e:
-            logger.error("Error saving scalers", error=str(e))
+            logger.error("Error saving scalers", exc_info=e)
 
     def load_scalers(self):
         """Load the scalers from a file."""
@@ -299,8 +285,9 @@ class ContinuousAutoTrader:
             logger.info("No scalers file found, creating new scalers")
             self.feature_scaler = StandardScaler() # Initialize a new scaler
         except Exception as e:
-            logger.error("Error loading scalers", error=str(e))
+            logger.error("Error loading scalers", exc_info=e)
             self.feature_scaler = StandardScaler() # Initialize a new scaler on error
+            self.scalers_fitted = False # Ensure scalers are not fitted on error
         return self.feature_scaler # Return the loaded scaler or a new one
 
     def fetch_market_data(self) -> List[Dict[str, Any]]:
@@ -341,19 +328,19 @@ class ContinuousAutoTrader:
             return processed_data
         
         except requests.exceptions.Timeout as e:
-            logger.error("Market data request timed out", error=str(e))
+            logger.error("Market data request timed out", exc_info=e)
             raise NetworkTimeoutError(f"Market data request timed out: {e}") from e
         except requests.exceptions.ConnectionError as e:
-            logger.error("Failed to connect to the exchange", error=str(e))
+            logger.error("Failed to connect to the exchange", exc_info=e)
             raise NetworkError(f"Failed to connect to the exchange: {e}") from e
         except requests.exceptions.HTTPError as e:
-            logger.error("HTTP error fetching market data", status_code=e.response.status_code, response_text=e.response.text)
+            logger.error("HTTP error fetching market data", status_code=e.response.status_code, response_text=e.response.text, exc_info=e)
             raise APIError(f"HTTP error fetching market data: {e.response.status_code} - {e.response.text}", status_code=e.response.status_code) from e
         except json.JSONDecodeError as e:
-            logger.error("Failed to decode JSON response from API", error=str(e), response_text=response.text if 'response' in locals() else 'N/A')
+            logger.error("Failed to decode JSON response from API", exc_info=e, response_text=response.text if 'response' in locals() else 'N/A')
             raise DataError("Invalid JSON response from API", data_type="market_data", validation_errors={"json_decode_error": str(e)}) from e
-        except (requests.exceptions.RequestException, json.JSONDecodeError) as e:
-            logger.error("An error occurred while fetching or processing market data", error=str(e), exc_info=True)
+        except Exception as e: # Catch all other exceptions
+            logger.error("An unexpected error occurred while fetching market data", exc_info=e)
             return []
 
     def extract_comprehensive_data(self, market_data: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
@@ -406,10 +393,10 @@ class ContinuousAutoTrader:
             return extracted
         
         except (ValueError, TypeError) as e:
-            logger.error("Error converting market data values", error=str(e), data=btc_aud_data)
+            logger.error("Error converting market data values", exc_info=e, data=btc_aud_data)
             return None
         except Exception as e:
-            logger.error("An unexpected error occurred during data extraction", error=str(e), exc_info=True)
+            logger.error("An unexpected error occurred during data extraction", exc_info=e)
             return None
 
     def manual_sma(self, data: np.ndarray, period: int) -> float:
@@ -561,7 +548,7 @@ class ContinuousAutoTrader:
             return market_data
         else:
             return result_data # Return the new list of dictionaries if only prices/volumes were provided
-
+        
     def create_lstm_model(self):
         """Create the LSTM model."""
         try:
@@ -584,7 +571,7 @@ class ContinuousAutoTrader:
             return model
         
         except Exception as e:
-            logger.error("Error creating LSTM model", error=str(e), exc_info=True)
+            logger.error("Error creating LSTM model", exc_info=e)
             return None
 
     def prepare_features(self, data_point: dict) -> list:
@@ -624,7 +611,7 @@ class ContinuousAutoTrader:
             return features
         
         except Exception as e:
-            logger.exception("Error preparing features", error=str(e))
+            logger.exception("Error preparing features", exc_info=e)
             # Return a zero vector of expected length on error
             features = [0.0] * 12  # 12 features in total
             return features
@@ -661,7 +648,7 @@ class ContinuousAutoTrader:
                 return
             
         except Exception as e:
-            logger.error("Error updating feature buffer", error=str(e), exc_info=True)
+            logger.error("Error updating feature buffer", exc_info=e)
 
     def fit_scalers(self) -> bool:
         """Fit scalers to the training data."""
@@ -672,7 +659,7 @@ class ContinuousAutoTrader:
                 logger.error("training_data is not a deque, cannot fit scalers.")
                 self.scalers_fitted = False
                 return False
-
+            
             processed_training_data = []
             for data_point in self.training_data:
                 features = self.prepare_features(data_point)
@@ -700,7 +687,7 @@ class ContinuousAutoTrader:
             return True
             
         except Exception as e:
-            logger.error("Error fitting scalers", error=str(e), exc_info=True)
+            logger.error("Error fitting scalers", exc_info=e)
             self.scalers_fitted = False
             return False
 
@@ -737,7 +724,7 @@ class ContinuousAutoTrader:
             return features, labels
         
         except Exception as e:
-            logger.error("Error preparing LSTM training data", error=str(e), exc_info=True)
+            logger.error("Error preparing LSTM training data", exc_info=e)
             return np.array([]), np.array([])
 
     def train_model(self) -> bool:
@@ -764,7 +751,7 @@ class ContinuousAutoTrader:
             return True
         
         except Exception as e:
-            logger.error("Error training LSTM model", error=str(e), exc_info=True)
+            logger.error("Error training LSTM model", exc_info=e)
             return False
 
     def _log_model_performance(self, history):
@@ -782,7 +769,7 @@ class ContinuousAutoTrader:
             logger.info("Training performance", loss=f"{loss[-1]:.4f}", mae=f"{mae[-1]:.4f}")
             
         except Exception as e:
-            logger.error("Error logging model performance", error=str(e), exc_info=True)
+            logger.error("Error logging model performance", exc_info=e)
 
     def calculate_position_pnl(self, current_price: float) -> Tuple[float, float]:
         """Calculate profit and loss for the current position."""
@@ -828,7 +815,7 @@ class ContinuousAutoTrader:
             return True
         
         except Exception as e:
-            logger.error("Error collecting and storing data", error=str(e), exc_info=True)
+            logger.error("Error collecting and storing data", exc_info=e)
             return False
 
     def load_training_data(self) -> Deque[Dict]:
@@ -842,7 +829,7 @@ class ContinuousAutoTrader:
             logger.info("No training data file found, starting fresh")
             return deque(maxlen=self.max_training_samples) # Return empty deque
         except Exception as e:
-            logger.error("Error loading training data", error=str(e))
+            logger.error("Error loading training data", exc_info=e)
             return deque(maxlen=self.max_training_samples) # Return empty deque on error
 
     def save_training_data(self):
@@ -852,7 +839,7 @@ class ContinuousAutoTrader:
                 json.dump(self.training_data, f, indent=2)
             logger.info("Training data saved", samples=len(self.training_data))
         except Exception as e:
-            logger.error("Error saving training data", error=str(e))
+            logger.error("Error saving training data", exc_info=e)
 
     def load_model(self):
         """Load the TensorFlow model or create a new one with correct input shape."""
@@ -871,10 +858,10 @@ class ContinuousAutoTrader:
             return model
             
         except (FileNotFoundError, OSError) as e:
-            logger.info("No valid model file found, will create new LSTM", error=str(e))
+            logger.info("No valid model file found, will create new LSTM", exc_info=e)
             return self.create_lstm_model() # Ensure a new model is created and returned
         except Exception as e:
-            logger.error("Error loading model. Creating new model.", error=str(e))
+            logger.error("Error loading model. Creating new model.", exc_info=e)
             return self.create_lstm_model() # Ensure a new model is created and returned
 
     def save_model(self):
@@ -886,7 +873,7 @@ class ContinuousAutoTrader:
             else:
                 logger.warning("No model to save.")
         except Exception as e:
-            logger.error("Error saving model", error=str(e))
+            logger.error("Error saving model", exc_info=e)
 
     def predict_trade_signal(self, latest_data: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -941,9 +928,9 @@ class ContinuousAutoTrader:
             if price_for_prediction == 0.0 and latest_data.get('lastPrice') is not None:
                 price_for_prediction = float(latest_data['lastPrice'])
 
-            if confidence > self.settings.trading.buy_confidence_threshold:
+            if confidence >= self.settings.buy_confidence_threshold:
                 signal = "BUY"
-            elif confidence < self.settings.trading.sell_confidence_threshold:
+            elif confidence <= self.settings.sell_confidence_threshold:
                 signal = "SELL"
             
             logger.info("Prediction result", prediction=f"{prediction:.4f}", signal=signal, confidence=f"{confidence:.4f}")
@@ -956,7 +943,7 @@ class ContinuousAutoTrader:
             }
         
         except Exception as e:
-            logger.error("Error predicting trade signal", error=str(e), exc_info=True)
+            logger.error("Error predicting trade signal", exc_info=e)
             return {"signal": "HOLD", "confidence": 0.5, "price": latest_data.get('price', 0.0), "rsi": latest_data.get('rsi', 50.0)}
 
     def execute_simulated_trade(self, trade_signal: Dict[str, Any]):
@@ -991,7 +978,7 @@ class ContinuousAutoTrader:
                 logger.info("RSI is oversold, overriding SELL signal to HOLD.", rsi=f"{rsi:.2f}")
                 signal_type = "HOLD"
         
-        if signal_type == "BUY" and confidence > self.settings.buy_confidence_threshold:
+        if signal_type == "BUY" and confidence >= self.settings.buy_confidence_threshold:
             # Check if we have enough balance to buy
             cost = self.trade_amount * current_price * (1 + self.fee_rate)
             if self.balance >= cost:
@@ -999,11 +986,11 @@ class ContinuousAutoTrader:
                 self.position_size += self.trade_amount
                 self.entry_price = current_price # For simplicity, assuming average entry price
                 trade_executed = True
-                logger.info("BUY executed", amount=f"{self.trade_amount:.4f} BTC", price=f"{current_price:.2f} AUD", new_balance=f"{self.balance:.2f} AUD", position=f"{self.position_size:.4f} BTC")
+                logger.info("BUY executed", amount=self.trade_amount, price=current_price, new_balance=self.balance, position=self.position_size)
             else:
                 logger.warning("Insufficient balance to BUY.", needed=f"{cost:.2f} AUD", have=f"{self.balance:.2f} AUD")
         
-        elif signal_type == "SELL" and confidence < self.settings.sell_confidence_threshold:
+        elif signal_type == "SELL" and confidence <= self.settings.sell_confidence_threshold:
             # Check if we have enough position to sell
             if self.position_size >= self.trade_amount:
                 revenue = self.trade_amount * current_price * (1 - self.fee_rate)
@@ -1013,16 +1000,16 @@ class ContinuousAutoTrader:
                     self.position_size = 0.0
                     self.entry_price = 0.0
                 trade_executed = True
-                logger.info("SELL executed", amount=f"{self.trade_amount:.4f} BTC", price=f"{current_price:.2f} AUD", new_balance=f"{self.balance:.2f} AUD", position=f"{self.position_size:.4f} BTC")
+                logger.info("SELL executed", amount=self.trade_amount, price=current_price, new_balance=self.balance, position=self.position_size)
             else:
                 logger.warning("Insufficient position to SELL.", have=f"{self.position_size:.4f} BTC", needed=f"{self.trade_amount:.4f} BTC")
         
         else:
-            logger.info("HOLD signal. No trade executed.", confidence=f"{confidence:.4f}", rsi=f"{rsi:.2f}")
+            logger.info("HOLD signal. No trade executed.", confidence=confidence, rsi=rsi)
         
         if trade_executed:
             pnl, pnl_pct = self.calculate_position_pnl(current_price)
-            logger.info("Current PnL", pnl=f"{pnl:.2f} AUD", pnl_pct=f"{pnl_pct:.2f}%")
+            logger.info("Current PnL", pnl=pnl, pnl_pct=pnl_pct)
 
     def should_save(self) -> bool:
         """Determine if the model and state should be saved."""

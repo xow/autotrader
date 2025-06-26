@@ -253,7 +253,7 @@ class TestMachineLearningComponents:
         
         # Check training parameters
         call_args = mock_tensorflow["model"].fit.call_args
-        assert call_args[1]['epochs'] == isolated_trader.settings.ml.training_epochs
+        assert call_args[1]['epochs'] == isolated_trader.settings.training_epochs
         assert call_args[1]['batch_size'] == isolated_trader.settings.ml.batch_size
         # validation_split and shuffle are not directly passed in the current train_model
         # assert call_args[1]['validation_split'] == 0.2

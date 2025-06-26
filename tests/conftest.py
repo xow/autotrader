@@ -308,7 +308,7 @@ def setup_test_environment():
         del os.environ["TF_CPP_MIN_LOG_LEVEL"]
 
 
-@pytest.fixture() # Removed autouse=True
+@pytest.fixture(autouse=True)
 def reset_settings_singleton():
     """Reset the Settings singleton before each test to ensure a clean state."""
     from autotrader.config.settings import Settings

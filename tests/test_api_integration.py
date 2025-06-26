@@ -40,7 +40,7 @@ class TestAPIIntegration:
             mock_get.assert_called_once_with(
                 expected_url,
                 params=expected_params,
-                timeout=isolated_trader.settings.api.timeout
+                timeout=isolated_trader.settings.api_timeout
             )
     
     def test_api_response_handling_success(self, isolated_trader):
