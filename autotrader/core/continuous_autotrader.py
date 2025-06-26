@@ -677,6 +677,11 @@ class ContinuousAutoTrader:
                 self.scalers_fitted = False
                 return False
             
+            if len(self.training_data) < self.settings.ml.sequence_length:
+                logger.warning("Insufficient training data for scaler fitting.", needed=self.settings.ml.sequence_length, got=len(self.training_data))
+                self.scalers_fitted = False
+                return False
+
             processed_training_data = []
             for data_point in self.training_data:
                 features = self.prepare_features(data_point)
