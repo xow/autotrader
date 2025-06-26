@@ -37,69 +37,10 @@ class TestContinuousAutoTrader:
         assert not trader.scalers_fitted
         assert len(trader.training_data) >= 0
     
-    def test_initialization_custom_balance(self): # Removed mock_file_operations
+    def test_initialization_custom_balance(self):
         """Test trader initialization with custom balance."""
         custom_balance = 50000.0
-        # Create a mock Settings instance with nested config objects
-        mock_settings_instance = Mock()
-        mock_settings_instance.config = Mock()
-        mock_settings_instance.config.trading = Mock()
-        mock_settings_instance.config.ml = Mock()
-        mock_settings_instance.config.operations = Mock()
-
-        # Set all necessary attributes on the mock_settings_instance
-        mock_settings_instance.initial_balance = custom_balance
-        mock_settings_instance.buy_confidence_threshold = 0.65
-        mock_settings_instance.sell_confidence_threshold = 0.35
-        mock_settings_instance.rsi_oversold = 20
-        mock_settings_instance.rsi_overbought = 80
-        mock_settings_instance.trade_amount = 0.01
-        mock_settings_instance.fee_rate = 0.001
-        mock_settings_instance.max_position_size = 0.1
-        mock_settings_instance.risk_per_trade = 0.02
-        mock_settings_instance.training_data_filename = "training_data.json"
-        mock_settings_instance.model_filename = "autotrader_model.keras"
-        mock_settings_instance.state_filename = "trader_state.pkl"
-        mock_settings_instance.scalers_filename = "scalers.pkl"
-        mock_settings_instance.sequence_length = 20
-        mock_settings_instance.max_training_samples = 2000
-        mock_settings_instance.lstm_units = 50
-        mock_settings_instance.dropout_rate = 0.2
-        mock_settings_instance.learning_rate = 0.001
-        mock_settings_instance.dense_units = 25
-        mock_settings_instance.feature_count = 12
-        mock_settings_instance.epochs = 10
-        mock_settings_instance.batch_size = 16
-        mock_settings_instance.volume_sma_period = 10
-        mock_settings_instance.save_interval = 1800
-        mock_settings_instance.training_interval = 600
-        mock_settings_instance.data_collection_interval = 60
-
-        # Mock nested config objects as well
-        mock_settings_instance.ml = Mock()
-        mock_settings_instance.ml.sequence_length = 20
-        mock_settings_instance.ml.max_training_samples = 2000
-        mock_settings_instance.ml.feature_count = 12
-        mock_settings_instance.ml.lstm_units = 50
-        mock_settings_instance.ml.dropout_rate = 0.2
-        mock_settings_instance.ml.learning_rate = 0.001
-        mock_settings_instance.ml.dense_units = 25
-        mock_settings_instance.ml.epochs = 10
-        mock_settings_instance.ml.batch_size = 16
-        mock_settings_instance.ml.volume_sma_period = 10
-        mock_settings_instance.operations = Mock()
-        mock_settings_instance.operations.save_interval = 1800
-        mock_settings_instance.operations.training_interval = 600
-        mock_settings_instance.operations.data_collection_interval = 60
-        mock_settings_instance.api = Mock()
-        mock_settings_instance.api.timeout = 10
-        mock_settings_instance.api.max_retries = 3
-        mock_settings_instance.api.base_url = "https://api.btcmarkets.net/v3"
-        mock_settings_instance.trading = Mock()
-        mock_settings_instance.trading.initial_balance = custom_balance
-
-        with patch('autotrader.config.settings.get_settings', return_value=mock_settings_instance):
-            trader = ContinuousAutoTrader()
+        trader = ContinuousAutoTrader(initial_balance=custom_balance)
         
         assert trader.balance == custom_balance
     

@@ -59,7 +59,8 @@ class ContinuousAutoTrader:
     def __init__(
         self,
         limited_run: bool = False,
-        run_iterations: int = 5
+        run_iterations: int = 5,
+        initial_balance: Optional[float] = None
     ):
         """
         Initialize the ContinuousAutoTrader.
@@ -71,7 +72,7 @@ class ContinuousAutoTrader:
         self.settings = get_settings()
 
         # Initialize state variables using settings
-        self.balance = self.settings.initial_balance
+        self.balance = initial_balance if initial_balance is not None else self.settings.initial_balance
         self.confidence_threshold = self.settings.buy_confidence_threshold # Using buy_confidence_threshold as general confidence
         self.rsi_oversold = self.settings.rsi_oversold
         self.rsi_overbought = self.settings.rsi_overbought
@@ -111,7 +112,9 @@ class ContinuousAutoTrader:
         logger.debug("ContinuousAutoTrader __init__ completed.")
         
         # Load initial state
-        self.load_state()
+        # Only load state if initial_balance was not explicitly provided
+        if initial_balance is None:
+            self.load_state()
         
         # Initialize the LSTM model
         if self.model is None:
