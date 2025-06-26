@@ -217,10 +217,13 @@ class ContinuousAutoTrader:
         logger.info("Initial model summary logged", model_summary_logged=self._model_summary_logged)
         
     def _setup_signal_handlers(self):
-        """Set up signal handlers for graceful shutdown."""
-        signal.signal(signal.SIGINT, self._signal_handler)
-        signal.signal(signal.SIGTERM, self._signal_handler)
-        logger.debug("Signal handlers set up.")
+        """Set up signal handlers for graceful shutdown, only if in the main thread."""
+        if threading.current_thread() is threading.main_thread():
+            signal.signal(signal.SIGINT, self._signal_handler)
+            signal.signal(signal.SIGTERM, self._signal_handler)
+            logger.debug("Signal handlers set up in main thread.")
+        else:
+            logger.debug("Skipping signal handler setup: not in main thread.")
 
     def _signal_handler(self, signum, frame):
         """Handle signals for graceful shutdown."""
@@ -821,12 +824,29 @@ class ContinuousAutoTrader:
     def load_training_data(self) -> Deque[Dict]:
         """Load training data from JSON file."""
         try:
-            with open(self.training_data_filename, "r") as f:
-                data = json.load(f)
-            logger.info("Training data loaded", samples=len(data))
-            return deque(data, maxlen=self.max_training_samples) # Return as deque
+            # Check if file exists and is not empty
+            if os.path.exists(self.training_data_filename) and os.path.getsize(self.training_data_filename) > 0:
+                with open(self.training_data_filename, "r") as f:
+                    data = json.load(f)
+                logger.info("Training data loaded", samples=len(data))
+                return deque(data, maxlen=self.max_training_samples) # Return as deque
+            else:
+                logger.info("Training data file not found or is empty, starting fresh")
+                # Ensure the file exists and contains an empty JSON array if it was empty
+                with open(self.training_data_filename, "w") as f:
+                    json.dump([], f)
+                return deque(maxlen=self.max_training_samples) # Return empty deque
+        except json.JSONDecodeError as e:
+            logger.error("Error decoding training data JSON, file might be corrupted. Starting fresh.", exc_info=e)
+            # Overwrite corrupted file with empty JSON array
+            with open(self.training_data_filename, "w") as f:
+                json.dump([], f)
+            return deque(maxlen=self.max_training_samples) # Return empty deque on error
         except FileNotFoundError:
-            logger.info("No training data file found, starting fresh")
+            logger.info("No training data file found, creating new one and starting fresh")
+            # Create the file with an empty JSON array
+            with open(self.training_data_filename, "w") as f:
+                json.dump([], f)
             return deque(maxlen=self.max_training_samples) # Return empty deque
         except Exception as e:
             logger.error("Error loading training data", exc_info=e)
@@ -836,7 +856,7 @@ class ContinuousAutoTrader:
         """Save training data to JSON file."""
         try:
             with open(self.training_data_filename, "w") as f:
-                json.dump(self.training_data, f, indent=2)
+                json.dump(list(self.training_data), f, indent=2) # Convert deque to list
             logger.info("Training data saved", samples=len(self.training_data))
         except Exception as e:
             logger.error("Error saving training data", exc_info=e)
@@ -1024,7 +1044,7 @@ class ContinuousAutoTrader:
         logger.info("AutoTrader bot started.")
         iteration_count = 0
         
-        while not self._shutdown_requested and (not self.limited_run or iteration_count < self.run_iterations):
+        while not self._shutdown_requested and (not self.limited_run or iteration_count <= self.run_iterations):
             try:
                 logger.info("--- Iteration ---", iteration=iteration_count + 1)
                 

@@ -33,8 +33,15 @@ class Settings:
         return cls._instance
     
     def __init__(self):
+        # Only load config if it hasn't been loaded yet for this instance
         if self._config is None:
             self._load_config()
+
+    @classmethod
+    def _reset_singleton(cls):
+        """Resets the singleton instance for testing purposes."""
+        cls._instance = None
+        cls._config = None
     
     def _load_config(self):
         """Load configuration based on environment"""

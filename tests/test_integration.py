@@ -85,6 +85,7 @@ class TestSystemIntegration:
         with patch.object(isolated_trader, 'fetch_market_data', side_effect=mock_fetch_data):
             isolated_trader.limited_run = True # Enable limited run
             isolated_trader.run_iterations = max_iterations # Set iterations
+            isolated_trader.settings.operations.data_collection_interval = 0.1 # Speed up test
             isolated_trader.run() # Call the main run loop
         
         # Verify system collected data over multiple iterations
@@ -135,7 +136,7 @@ class TestSystemIntegration:
         
         # Verify training parameters (using settings values)
         call_args = mock_tensorflow["model"].fit.call_args
-        assert call_args[1]['epochs'] == isolated_trader.settings.ml.training_epochs
+        assert call_args[1]['epochs'] == isolated_trader.settings.training_epochs
         assert call_args[1]['batch_size'] == isolated_trader.settings.ml.batch_size
         # validation_split and shuffle are not directly passed in the current train_model
         # assert call_args[1]['validation_split'] == 0.2

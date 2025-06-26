@@ -150,7 +150,7 @@ def mock_file_operations(temp_dir):
 
 
 @pytest.fixture
-def isolated_trader(temp_dir, test_config, mock_logging):
+def isolated_trader(temp_dir, test_config, mock_logging, initial_balance: float = None):
     """Create an isolated trader instance for testing with a mocked Settings object."""
     original_cwd = os.getcwd()
     os.chdir(temp_dir)
@@ -158,6 +158,9 @@ def isolated_trader(temp_dir, test_config, mock_logging):
     from autotrader.core.continuous_autotrader import ContinuousAutoTrader
     import autotrader.core.continuous_autotrader as trader_module
     from autotrader.config.settings import Settings, get_settings
+
+    # Ensure the Settings singleton is reset before each test using isolated_trader
+    Settings._reset_singleton()
 
     # Create a mock Settings instance with nested config objects
     mock_settings_instance = Mock(spec=Settings)
@@ -168,8 +171,8 @@ def isolated_trader(temp_dir, test_config, mock_logging):
     mock_settings_instance.config.operations = Mock()
 
     # Set default values for mocked settings based on test_config or common defaults
-    mock_settings_instance.initial_balance = test_config["initial_balance"]
-    mock_settings_instance.config.trading.initial_balance = test_config["initial_balance"]
+    mock_settings_instance.initial_balance = initial_balance if initial_balance is not None else test_config["initial_balance"]
+    mock_settings_instance.config.trading.initial_balance = initial_balance if initial_balance is not None else test_config["initial_balance"]
     mock_settings_instance.config.trading.trade_amount = 0.01
     mock_settings_instance.config.trading.fee_rate = 0.001
     mock_settings_instance.config.trading.market_pair = "BTC-AUD"
