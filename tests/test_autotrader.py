@@ -162,7 +162,7 @@ class TestContinuousAutoTrader:
 
     def test_scaler_fitting(self, isolated_trader, sample_training_data):
         """Test fitting scalers to training data."""
-        isolated_trader.training_data = sample_training_data
+        isolated_trader.training_data = deque(sample_training_data, maxlen=isolated_trader.max_training_samples)
         
         success = isolated_trader.fit_scalers() # No need to pass data, it uses self.training_data
         

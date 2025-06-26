@@ -594,8 +594,19 @@ class ContinuousAutoTrader:
                 raise ValueError("Empty data point provided")
             
             # Extract features in the exact order expected by the model
+            price = data_point.get('price') or data_point.get('lastPrice')
+            if price is None:
+                ask = data_point.get('ask')
+                bid = data_point.get('bid')
+                if ask is not None and bid is not None:
+                    price = (float(ask) + float(bid)) / 2
+                else:
+                    price = 0.0 # Default to 0 if no price, ask, or bid is available
+            else:
+                price = float(price)
+
             features = [
-                float(data_point.get('price', 0)),
+                price,
                 float(data_point.get('volume', 0)),
                 float(data_point.get('spread', 0)),
                 float(data_point.get('sma_5', 0)),
@@ -1059,7 +1070,7 @@ class ContinuousAutoTrader:
                     continue
                 
                 # 2. Fit scalers if needed
-                if self.feature_scaler is None and len(self.training_data) >= self.settings.ml.sequence_length:
+                if not self.scalers_fitted and len(self.training_data) >= self.settings.ml.sequence_length:
                     self.fit_scalers()
                 
                 # 3. Train model if needed
