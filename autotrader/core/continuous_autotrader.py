@@ -13,8 +13,10 @@ from typing import Dict, List, Optional, Tuple, Any, Union, Deque
 from collections import deque
 import logging
 import structlog
-from sklearn.preprocessing import StandardScaler, MinMaxScaler
 import pandas as pd
+
+# Import FeatureEngineer and FeatureConfig
+from autotrader.ml.feature_engineer import FeatureEngineer, FeatureConfig
 
 # Constants
 DEFAULT_CONFIG = {
@@ -98,14 +100,42 @@ class ContinuousAutoTrader:
         self.max_training_samples = self.settings.max_training_samples # Use ml.max_training_samples
         self.save_interval_seconds = self.settings.save_interval
         self.training_interval_seconds = self.settings.training_interval
-        self.feature_scaler = None # Initialize to None, test will set
         self.model = None # Initialize to None, test will set
         self.training_data = deque(self.load_training_data(), maxlen=self.max_training_samples) # Initialize deque with loaded data and maxlen
         self._price_history = []
         self._training_data_deque = deque(maxlen=self.sequence_length) # Changed to sequence_length for buffer
         self._model_summary_logged = False
         self._data_buffer = deque(maxlen=self.sequence_length)
-        self.scalers_fitted = False # Add this attribute
+        
+        # Initialize FeatureEngineer
+        self.feature_engineer = FeatureEngineer(config=FeatureConfig(
+            scaling_method=self.settings.ml.scaling_method,
+            sma_periods=self.settings.ml.sma_periods,
+            ema_periods=self.settings.ml.ema_periods,
+            rsi_period=self.settings.ml.rsi_period,
+            macd_fast=self.settings.ml.macd_fast,
+            macd_slow=self.settings.ml.macd_slow,
+            macd_signal=self.settings.ml.macd_signal,
+            bb_period=self.settings.ml.bb_period,
+            bb_std=self.settings.ml.bb_std,
+            volatility_window=self.settings.ml.volatility_window,
+            lag_periods=self.settings.ml.lag_periods,
+            rolling_windows=self.settings.ml.rolling_windows,
+            use_sma=self.settings.ml.use_sma,
+            use_ema=self.settings.ml.use_ema,
+            use_rsi=self.settings.ml.use_rsi,
+            use_macd=self.settings.ml.use_macd,
+            use_bollinger=self.settings.ml.use_bollinger,
+            use_volume_indicators=self.settings.ml.use_volume_indicators,
+            use_price_ratios=self.settings.ml.use_price_ratios,
+            use_price_differences=self.settings.ml.use_price_differences,
+            use_log_returns=self.settings.ml.use_log_returns,
+            use_volatility=self.settings.ml.use_volatility,
+            use_time_features=self.settings.ml.use_time_features,
+            use_cyclical_encoding=self.settings.ml.use_cyclical_encoding,
+            use_lag_features=self.settings.ml.use_lag_features,
+            use_rolling_stats=self.settings.ml.use_rolling_stats
+        ))
         
         # Setup signal handlers for graceful shutdown
         self._setup_signal_handlers()
@@ -147,8 +177,8 @@ class ContinuousAutoTrader:
             self.model.summary(print_fn=lambda x: logger.info(x)) # Use print_fn to log summary
             self._model_summary_logged = True
         
-        # Log the feature scaler
-        logger.info("Feature scaler", scaler=self.feature_scaler)
+        # Log the feature engineer's scaler status
+        logger.info("Feature engineer scaler fitted status", is_fitted=self.feature_engineer.is_fitted_)
         
         # Log the initial balance
         logger.info("Initial balance", balance=self.balance)
@@ -201,8 +231,8 @@ class ContinuousAutoTrader:
         # Log the initial training interval seconds
         logger.info("Initial training interval seconds", training_interval_seconds=self.training_interval_seconds)
         
-        # Log the initial feature scaler
-        logger.info("Initial feature scaler", feature_scaler=self.feature_scaler)
+        # Log the initial feature engineer
+        logger.info("Initial feature engineer", feature_engineer=self.feature_engineer)
         
         # Log the initial model
         logger.info("Initial model", model=self.model)
@@ -273,7 +303,8 @@ class ContinuousAutoTrader:
         try:
             with open(self.scaler_filename, 'wb') as f:
                 pickle.dump({
-                    'feature_scaler': self.feature_scaler,
+                    'feature_engineer_scaler': self.feature_engineer.scaler,
+                    'feature_names': self.feature_engineer.feature_names_
                 }, f)
             logger.info("Scalers saved successfully")
         except Exception as e:
@@ -284,18 +315,19 @@ class ContinuousAutoTrader:
         try:
             with open(self.scaler_filename, 'rb') as f:
                 scalers = pickle.load(f)
-                self.feature_scaler = scalers['feature_scaler']
-                self.scalers_fitted = True # Set to True on successful load
+                self.feature_engineer.scaler = scalers['feature_engineer_scaler']
+                self.feature_engineer.feature_names_ = scalers['feature_names']
+                self.feature_engineer.is_fitted_ = True # Set to True on successful load
             logger.info("Scalers loaded successfully")
         except FileNotFoundError:
             logger.info("No scalers file found, creating new scalers")
-            self.feature_scaler = StandardScaler() # Initialize a new scaler
-            self.scalers_fitted = True # Set to True as a scaler is now available
+            self.feature_engineer._init_scaler() # Initialize a new scaler
+            self.feature_engineer.is_fitted_ = False # Not fitted yet
         except Exception as e:
             logger.error("Error loading scalers", exc_info=e)
-            self.feature_scaler = StandardScaler() # Initialize a new scaler on error
-            self.scalers_fitted = True # Set to True as a scaler is now available
-        return self.feature_scaler # Return the loaded scaler or a new one
+            self.feature_engineer._init_scaler() # Initialize a new scaler on error
+            self.feature_engineer.is_fitted_ = False # Not fitted yet
+        return self.feature_engineer.scaler # Return the loaded scaler or a new one
 
     def fetch_market_data(self) -> List[Dict[str, Any]]:
         """Fetch market data from the BTCMarkets API."""
@@ -607,57 +639,36 @@ class ContinuousAutoTrader:
             return None
 
     def prepare_features(self, data_point: dict) -> list:
-        """Prepare feature vector from a single data point.
-        
-        Args:
-            data_point: Dictionary containing price and indicator data
-            
-        Returns:
-            list: Feature vector for model input
-        """
+        """Prepare feature vector from a single data point using FeatureEngineer."""
         try:
             if not data_point:
                 raise ValueError("Empty data point provided")
             
-            # Extract features in the exact order expected by the model
-            price = data_point.get('price') or data_point.get('lastPrice')
-            if price is None:
-                ask = data_point.get('ask')
-                bid = data_point.get('bid')
-                if ask is not None and bid is not None:
-                    price = (float(ask) + float(bid)) / 2
-                else:
-                    price = 0.0 # Default to 0 if no price, ask, or bid is available
-            else:
-                price = float(price)
-
-            features = [
-                price,
-                float(data_point.get('volume', 0)),
-                float(data_point.get('spread', 0)),
-                float(data_point.get('sma_5', 0)),
-                float(data_point.get('sma_20', 0)),
-                float(data_point.get('ema_12', 0)),
-                float(data_point.get('ema_26', 0)),
-                float(data_point.get('rsi', 0)),
-                float(data_point.get('macd', 0)),
-                float(data_point.get('macd_signal', 0)),
-                float(data_point.get('bb_upper', 0)),
-                float(data_point.get('bb_lower', 0))
-            ]
+            # Convert single data point to a list of dicts for FeatureEngineer
+            data_for_fe = [data_point]
+            
+            # Transform features using FeatureEngineer
+            # The transform method returns a numpy array of shape (num_samples, num_features)
+            transformed_features = self.feature_engineer.transform(data_for_fe)
+            
+            # Extract the single feature vector
+            features = transformed_features[0].tolist()
             
             # Log the first few features for debugging (without sensitive data)
             if len(features) > 0:
-                logger.debug("Prepared features", price=f"{features[0]:.2f}", volume=f"{features[1]:.2f}",
-                            spread=f"{features[2]:.2f}", rsi=f"{features[7]:.2f}")
+                logger.debug("Prepared features using FeatureEngineer", first_few_features=features[:5])
             
             return features
         
         except Exception as e:
-            logger.exception("Error preparing features", exc_info=e)
+            logger.exception("Error preparing features with FeatureEngineer", exc_info=e)
             # Return a zero vector of expected length on error
-            features = [0.0] * 12  # 12 features in total
-            return features
+            # This length should ideally come from feature_engineer.get_feature_names()
+            # but for now, we'll use a placeholder if not fitted.
+            if self.feature_engineer.is_fitted_:
+                return [0.0] * len(self.feature_engineer.get_feature_names())
+            else:
+                return [0.0] * self.settings.ml.feature_count # Fallback to configured feature count
 
     def _update_feature_buffer(self, market_data: Dict[str, Any]) -> None:
         """Update the feature buffer with the latest market data."""
@@ -694,58 +705,33 @@ class ContinuousAutoTrader:
             logger.error("Error updating feature buffer", exc_info=e)
 
     def fit_scalers(self) -> bool:
-        """Fit scalers to the training data."""
+        """Fit scalers using the FeatureEngineer to the training data."""
         try:
-            # Prepare the training data by extracting features
-            # Ensure training_data is a list of dictionaries
+            # Ensure training_data is a deque
             if not isinstance(self.training_data, deque):
                 logger.error("training_data is not a deque, cannot fit scalers.")
-                self.scalers_fitted = False
+                self.feature_engineer.is_fitted_ = False
                 return False
             
             if len(self.training_data) < self.settings.ml.sequence_length:
                 logger.warning("Insufficient training data for scaler fitting.", needed=self.settings.ml.sequence_length, got=len(self.training_data))
-                self.scalers_fitted = False
-                return False
-
-            processed_training_data = []
-            for data_point in self.training_data:
-                features = self.prepare_features(data_point)
-                # Filter out data points with NaN values in features
-                if not any(np.isnan(f) for f in features):
-                    processed_training_data.append(features)
-            
-            # Ensure the processed training data is not empty
-            if not processed_training_data:
-                logger.warning("No valid processed training data available, skipping scaler fitting")
-                self.scalers_fitted = False
+                self.feature_engineer.is_fitted_ = False
                 return False
             
-            # Convert to numpy array
-            processed_training_data_np = np.array(processed_training_data)
-            print(f"DEBUG: processed_training_data_np.shape: {processed_training_data_np.shape}", flush=True)
+            # Fit the FeatureEngineer directly on the raw training data
+            # The FeatureEngineer handles its own internal scaler fitting
+            self.feature_engineer.fit(list(self.training_data))
             
-            # Initialize the feature scaler if not already initialized
-            if self.feature_scaler is None:
-                self.feature_scaler = StandardScaler()
-            
-            # Fit the feature scaler
-            if processed_training_data_np.shape[0] > 0:
-                self.feature_scaler.fit(processed_training_data_np)
-                self.scalers_fitted = True
-                logger.info("Scalers fitted successfully")
-            else:
-                logger.warning("No valid data to fit scalers.")
-                self.scalers_fitted = False
+            logger.info("FeatureEngineer fitted successfully")
             return True
             
         except Exception as e:
-            logger.error("Error fitting scalers", exc_info=e)
-            self.scalers_fitted = False
+            logger.error("Error fitting FeatureEngineer", exc_info=e)
+            self.feature_engineer.is_fitted_ = False
             return False
 
     def prepare_lstm_training_data(self) -> Tuple[np.ndarray, np.ndarray]:
-        """Prepare data for LSTM training."""
+        """Prepare data for LSTM training using FeatureEngineer."""
         try:
             # Ensure we have enough data
             if len(self.training_data) < self.sequence_length:
@@ -753,18 +739,29 @@ class ContinuousAutoTrader:
                 # Return empty arrays with correct dimensions
                 return np.empty((0, self.sequence_length, self.settings.ml.feature_count)), np.empty((0,))
             
-            # Extract features and labels
+            # Transform all training data using the fitted FeatureEngineer
+            # This will return scaled features
+            if not self.feature_engineer.is_fitted_:
+                logger.warning("FeatureEngineer not fitted, cannot prepare LSTM training data.")
+                return np.empty((0, self.sequence_length, self.settings.ml.feature_count)), np.empty((0,))
+            
+            # Get all scaled features from the training data
+            all_scaled_features = self.feature_engineer.transform(list(self.training_data))
+            
             features, labels = [], []
-            for i in range(len(self.training_data) - self.sequence_length):
-                # Extract the sequence and prepare features for each data point in the sequence
-                sequence = [self.prepare_features(self.training_data[j]) for j in range(i, i + self.sequence_length)]
+            num_features = all_scaled_features.shape[1] # Get the actual number of features from FeatureEngineer
+            
+            for i in range(len(all_scaled_features) - self.sequence_length):
+                # Extract the sequence of scaled features
+                sequence = all_scaled_features[i : i + self.sequence_length]
                 
-                # Extract the label (next data point) and prepare its features
-                next_data_point = self.prepare_features(self.training_data[i + self.sequence_length])
+                # Extract the label (next data point's price, unscaled)
+                # We need the original price for the label, not the scaled one.
+                next_original_data_point = self.training_data[i + self.sequence_length]
+                next_price = float(next_original_data_point.get('price', next_original_data_point.get('lastPrice', 0.0)))
                 
-                # Append the sequence and label
                 features.append(sequence)
-                labels.append(next_data_point[0]) # Assuming the label is the first feature (e.g., price)
+                labels.append(next_price)
             
             # Convert to numpy arrays
             features = np.array(features)
@@ -970,8 +967,8 @@ class ContinuousAutoTrader:
                         except ValueError:
                             current_market_price = 0.0 # Keep 0.0 if conversion fails
  
-            if not self.model or not self.feature_scaler:
-                logger.warning("Model or scaler not available for prediction, returning HOLD signal.")
+            if not self.model or not self.feature_engineer.is_fitted_: # Check feature_engineer.is_fitted_
+                logger.warning("Model or feature engineer not available for prediction, returning HOLD signal.")
                 return {"signal": "HOLD", "confidence": 0.5, "price": current_market_price, "rsi": latest_data.get('rsi', 50.0) if isinstance(latest_data, dict) else 50.0}
             
             # Ensure latest_data is a dictionary before proceeding
@@ -979,16 +976,14 @@ class ContinuousAutoTrader:
                 logger.warning("Invalid latest_data format for prediction. Expected dict, returning HOLD signal.", data_type=type(latest_data))
                 return {"signal": "HOLD", "confidence": 0.5, "price": current_market_price, "rsi": 50.0}
  
-            # Prepare features for prediction
-            features = self.prepare_features(latest_data)
+            # Prepare features for prediction using FeatureEngineer
+            # This will return scaled features directly
+            features_array = self.feature_engineer.transform([latest_data]) # Pass as list for transform
             
             # Ensure features are not empty
-            if not features:
+            if features_array.size == 0:
                 logger.warning("No features prepared for prediction, returning HOLD signal.")
                 return {"signal": "HOLD", "confidence": 0.5, "price": current_market_price, "rsi": latest_data.get('rsi', 50.0)}
-            
-            # Scale the features
-            scaled_features = self.feature_scaler.transform(np.array(features).reshape(1, -1))
             
             # Reshape for LSTM input (1 sample, sequence_length, num_features)
             # For a single prediction, we need to create a sequence of length 1
@@ -998,8 +993,8 @@ class ContinuousAutoTrader:
             # This might need adjustment based on how the model was actually trained
             
             # Pad the scaled_features to match the sequence_length
-            padded_features = np.zeros((1, self.sequence_length, self.settings.ml.feature_count))
-            padded_features[0, -1, :] = scaled_features # Place the latest features at the end of the sequence
+            padded_features = np.zeros((1, self.sequence_length, features_array.shape[1])) # Use actual feature count
+            padded_features[0, -1, :] = features_array[0, :] # Place the latest features at the end of the sequence
             
             prediction = self.model.predict(padded_features)[0][0]
             

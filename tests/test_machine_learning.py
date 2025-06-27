@@ -362,8 +362,8 @@ class TestMachineLearningComponents:
     
     def test_feature_scaling_consistency(self, isolated_trader, sample_training_data):
         """Test that feature scaling is consistent across calls."""
-        isolated_trader.training_data = sample_training_data
-        
+        isolated_trader.training_data = deque(sample_training_data, maxlen=isolated_trader.max_training_samples)
+    
         # Fit scalers
         success = isolated_trader.fit_scalers()
         assert success
@@ -372,8 +372,8 @@ class TestMachineLearningComponents:
         test_data = sample_training_data[0]
         features = isolated_trader.prepare_features(test_data)
         
-        scaled_1 = isolated_trader.feature_scaler.transform([features])
-        scaled_2 = isolated_trader.feature_scaler.transform([features])
+        scaled_1 = isolated_trader.prepare_features(test_data)
+        scaled_2 = isolated_trader.prepare_features(test_data)
         
         # Should be identical
         np.testing.assert_array_almost_equal(scaled_1, scaled_2)

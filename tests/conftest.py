@@ -196,6 +196,32 @@ def isolated_trader(temp_dir, test_config, mock_logging, initial_balance: float 
     mock_settings_instance.config.ml.batch_size = 16
     mock_settings_instance.config.ml.feature_count = 12
     mock_settings_instance.config.ml.volume_sma_period = 10 # Assuming a default value
+    mock_settings_instance.config.ml.scaling_method = "standard" # Add scaling method
+    mock_settings_instance.config.ml.sma_periods = [5, 10, 20, 50]
+    mock_settings_instance.config.ml.ema_periods = [12, 26, 50]
+    mock_settings_instance.config.ml.rsi_period = 14
+    mock_settings_instance.config.ml.macd_fast = 12
+    mock_settings_instance.config.ml.macd_slow = 26
+    mock_settings_instance.config.ml.macd_signal = 9
+    mock_settings_instance.config.ml.bb_period = 20
+    mock_settings_instance.config.ml.bb_std = 2
+    mock_settings_instance.config.ml.volatility_window = 10
+    mock_settings_instance.config.ml.lag_periods = [1, 2, 3, 5, 10]
+    mock_settings_instance.config.ml.rolling_windows = [5, 10, 20]
+    mock_settings_instance.config.ml.use_sma = True
+    mock_settings_instance.config.ml.use_ema = True
+    mock_settings_instance.config.ml.use_rsi = True
+    mock_settings_instance.config.ml.use_macd = True
+    mock_settings_instance.config.ml.use_bollinger = True
+    mock_settings_instance.config.ml.use_volume_indicators = True
+    mock_settings_instance.config.ml.use_price_ratios = True
+    mock_settings_instance.config.ml.use_price_differences = True
+    mock_settings_instance.config.ml.use_log_returns = True
+    mock_settings_instance.config.ml.use_volatility = True
+    mock_settings_instance.config.ml.use_time_features = True
+    mock_settings_instance.config.ml.use_cyclical_encoding = True
+    mock_settings_instance.config.ml.use_lag_features = True
+    mock_settings_instance.config.ml.use_rolling_stats = True
 
     mock_settings_instance.config.operations.data_collection_interval = 60
     mock_settings_instance.config.operations.save_interval = test_config["save_interval_seconds"]
@@ -237,8 +263,8 @@ def isolated_trader(temp_dir, test_config, mock_logging, initial_balance: float 
         # Explicitly set model and scaler after instantiation
         # This ensures the test's mocks are used, overriding any real ones created in __init__
         trader.model = Mock() # A generic mock for the model
-        trader.feature_scaler = StandardScaler() # A real scaler
-        trader.scalers_fitted = False # Manually set to False
+        # Removed explicit setting of trader.feature_scaler and trader.scalers_fitted
+        # as FeatureEngineer now manages its own internal scaler.
         
         trader.training_data = deque(maxlen=trader.max_training_samples) # Ensure deque is initialized
 

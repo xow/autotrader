@@ -11,7 +11,7 @@ This module provides secure configuration management with support for:
 import os
 import json
 from pathlib import Path
-from typing import Dict, Any, Optional, Union
+from typing import Dict, Any, Optional, Union, List
 from dataclasses import dataclass, asdict, field
 from enum import Enum
 import logging
@@ -85,6 +85,34 @@ class MLConfig:
     feature_count: int = 12
     enable_technical_indicators: bool = True
     volume_sma_period: int = 10 # Default period for volume SMA
+    
+    # Feature Engineering Configuration (for FeatureEngineer)
+    scaling_method: str = "standard"  # standard, minmax, robust, quantile
+    sma_periods: Optional[List[int]] = field(default_factory=lambda: [5, 10, 20, 50])
+    ema_periods: Optional[List[int]] = field(default_factory=lambda: [12, 26, 50])
+    rsi_period: int = 14
+    macd_fast: int = 12
+    macd_slow: int = 26
+    macd_signal: int = 9
+    bb_period: int = 20
+    bb_std: int = 2
+    use_sma: bool = True
+    use_ema: bool = True
+    use_rsi: bool = True
+    use_macd: bool = True
+    use_bollinger: bool = True
+    use_volume_indicators: bool = True
+    use_price_ratios: bool = True
+    use_price_differences: bool = True
+    use_log_returns: bool = True
+    use_volatility: bool = True
+    volatility_window: int = 10
+    use_time_features: bool = True
+    use_cyclical_encoding: bool = True
+    use_lag_features: bool = True
+    lag_periods: Optional[List[int]] = field(default_factory=lambda: [1, 2, 3, 5, 10])
+    use_rolling_stats: bool = True
+    rolling_windows: Optional[List[int]] = field(default_factory=lambda: [5, 10, 20])
 
 
 @dataclass
