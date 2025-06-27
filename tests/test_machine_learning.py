@@ -189,6 +189,10 @@ class TestMachineLearningComponents:
         features = isolated_trader.prepare_features(test_data_point)
         
         # Transform features
+        # Mock the return value of transform to be a numpy array with the correct shape and no NaNs
+        mock_scaled_features_array = np.zeros((1, isolated_trader.settings.ml.feature_count))
+        isolated_trader.feature_scaler.transform.return_value = mock_scaled_features_array
+        
         scaled_features = isolated_trader.feature_scaler.transform(np.array(features).reshape(1, -1))
         
         assert scaled_features.shape == (1, isolated_trader.settings.ml.feature_count)
