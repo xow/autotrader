@@ -148,7 +148,7 @@ class TestMachineLearningComponents:
         
         features = isolated_trader.prepare_features(data_point)
         
-        assert len(features) == 12  # Expected number of features
+        assert len(features) == isolated_trader.settings.ml.feature_count  # Expected number of features
         assert all(isinstance(f, (int, float)) for f in features)
         assert all(not np.isnan(f) for f in features)
         
