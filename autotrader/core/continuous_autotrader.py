@@ -106,6 +106,8 @@ class ContinuousAutoTrader:
         self._training_data_deque = deque(maxlen=self.sequence_length) # Changed to sequence_length for buffer
         self._model_summary_logged = False
         self._data_buffer = deque(maxlen=self.sequence_length)
+        self.scalers_fitted = False
+        self.feature_scaler = None
         
         # Initialize FeatureEngineer
         self.feature_engineer = FeatureEngineer(config=FeatureConfig(
