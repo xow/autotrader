@@ -66,7 +66,17 @@ class TestAPIIntegration:
             result = isolated_trader.fetch_market_data()
             
             print(f"API result: {result}")
-            assert result == mock_response_data
+            # Extract relevant fields from result[0] for comparison, ignoring 'timestamp'
+            extracted_result = {
+                "marketId": result[0]["marketId"],
+                "lastPrice": result[0]["lastPrice"],
+                "volume24h": result[0]["volume24h"],
+                "bestBid": result[0]["bestBid"],
+                "bestAsk": result[0]["bestAsk"],
+                "high24h": result[0]["high24h"],
+                "low24h": result[0]["low24h"]
+            }
+            assert extracted_result == mock_response_data[0]
             assert len(result) == 1
             assert result[0]["marketId"] == "BTC-AUD"
             # Ensure lastPrice is a float, not a string

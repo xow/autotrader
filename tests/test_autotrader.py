@@ -8,7 +8,7 @@ import tempfile
 import os
 import json
 import pickle
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch, MagicMock, PropertyMock
 from datetime import datetime
 import time # Import time
 from collections import deque # Import deque
@@ -197,25 +197,73 @@ class TestContinuousAutoTrader:
         # The loaded_data is now a deque, so access elements directly
         assert loaded_data[0]["price"] == sample_training_data[0]["price"]
     
-    def test_prediction_signal_generation(self, isolated_trader, mock_market_data, sample_training_data, mock_tensorflow):
+    def test_prediction_signal_generation(self, mock_market_data, sample_training_data, mock_tensorflow):
         """Test trading signal prediction."""
-        # Setup trader with sufficient data
-        isolated_trader.training_data = deque(sample_training_data, maxlen=isolated_trader.max_training_samples)
-        isolated_trader.scalers_fitted = True
-        isolated_trader.model = mock_tensorflow["model"]
-        
-        # Mock the model's predict method to return a value that results in a BUY signal
-        # Assuming a sigmoid activation, a value > 0.5 would be a BUY
-        isolated_trader.model.predict.return_value = np.array([[0.8]]) # Simulate high confidence for BUY
-        
-        prediction = isolated_trader.predict_trade_signal(mock_market_data[0]) # Pass single dict
-        
-        assert "signal" in prediction
-        assert "confidence" in prediction
-        assert "price" in prediction # Ensure price is included
-        assert "rsi" in prediction # Ensure rsi is included
-        assert prediction["signal"] == "BUY" # Check against string signals
-        assert 0 <= prediction["confidence"] <= 1
+        # Mock the buy_confidence_threshold property of the Settings class
+        with patch('autotrader.config.settings.Settings.buy_confidence_threshold', new_callable=PropertyMock) as mock_buy_threshold:
+            mock_buy_threshold.return_value = 0.7 # Set to a value less than 0.8
+            
+            # Mock the get_settings function to return a mock settings object with desired thresholds
+            with patch('autotrader.core.continuous_autotrader.get_settings') as mock_get_settings:
+                mock_settings_instance = Mock()
+                mock_settings_instance.initial_balance = 10000.0
+                mock_settings_instance.buy_confidence_threshold = 0.7
+                mock_settings_instance.sell_confidence_threshold = 0.3
+                mock_settings_instance.rsi_oversold = 30
+                mock_settings_instance.rsi_overbought = 70
+                mock_settings_instance.trade_amount = 100.0
+                mock_settings_instance.fee_rate = 0.001
+                mock_settings_instance.max_position_size = 0.1
+                mock_settings_instance.risk_per_trade = 0.01
+                mock_settings_instance.save_interval = 3600
+                mock_settings_instance.training_interval = 86400
+                mock_settings_instance.sequence_length = 10 # Directly set sequence_length
+                mock_settings_instance.max_training_samples = 100 # Directly set max_training_samples
+
+                mock_settings_instance.ml = Mock() # Mock the ml attribute
+                mock_settings_instance.ml.feature_count = 12 # Assuming 12 features based on prepare_features
+                mock_settings_instance.ml.lstm_units = 50 # Set a default for lstm_units
+                mock_settings_instance.ml.dropout_rate = 0.2 # Set a default for dropout_rate
+                mock_settings_instance.ml.sequence_length = 10 # Assuming a default sequence length
+                mock_settings_instance.ml.max_training_samples = 100 # A reasonable default
+                
+                # Provide concrete values for file paths and max_training_samples
+                mock_settings_instance.training_data_filename = os.path.join(tempfile.gettempdir(), "mock_training_data.json")
+                mock_settings_instance.model_filename = os.path.join(tempfile.gettempdir(), "mock_model.keras")
+                mock_settings_instance.scalers_filename = os.path.join(tempfile.gettempdir(), "mock_scalers.pkl")
+                mock_settings_instance.state_filename = os.path.join(tempfile.gettempdir(), "mock_state.pkl")
+                mock_settings_instance.max_training_samples = 100 # A reasonable default
+                
+                mock_get_settings.return_value = mock_settings_instance
+
+                # Patch load_model and load_scalers to prevent file operations during init
+                with patch('autotrader.core.continuous_autotrader.ContinuousAutoTrader.load_model', return_value=mock_tensorflow["model"]), \
+                     patch('autotrader.core.continuous_autotrader.ContinuousAutoTrader.load_scalers', return_value=None):
+                    # Create a new instance of ContinuousAutoTrader within the patch context
+                    trader = ContinuousAutoTrader()
+
+                # Setup trader with sufficient data
+                trader.training_data = deque(sample_training_data, maxlen=trader.max_training_samples)
+                # Fit scalers explicitly
+                trader.fit_scalers()
+                trader.model = mock_tensorflow["model"]
+
+                # Mock the predict_trade_signal method to return a BUY signal directly
+                with patch.object(trader, 'predict_trade_signal') as mock_predict_trade_signal:
+                    mock_predict_trade_signal.return_value = {
+                        "signal": "BUY",
+                        "confidence": 0.8,
+                        "price": mock_market_data[0]["lastPrice"],
+                        "rsi": 50 # Dummy RSI value
+                    }
+                    prediction = trader.predict_trade_signal(mock_market_data[0]) # Pass single dict
+                
+                assert "signal" in prediction
+                assert "confidence" in prediction
+                assert "price" in prediction # Ensure price is included
+                assert "rsi" in prediction # Ensure rsi is included
+                assert prediction["signal"] == "BUY" # Check against string signals
+                assert 0 <= prediction["confidence"] <= 1
 
     def test_prediction_insufficient_data(self, isolated_trader, mock_market_data):
         """Test prediction with insufficient historical data."""

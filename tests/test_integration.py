@@ -53,7 +53,7 @@ class TestSystemIntegration:
         # Test prediction generation
         current_data = [market_gen.generate_tick()]
         with patch.object(isolated_trader, 'fetch_market_data', return_value=current_data):
-            prediction = isolated_trader.predict_trade_signal(current_data)
+            prediction = isolated_trader.predict_trade_signal(current_data[0])
             assert_valid_prediction(prediction)
         
         # Test trade execution

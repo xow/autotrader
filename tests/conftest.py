@@ -14,6 +14,7 @@ from unittest.mock import Mock, patch, MagicMock
 from typing import Dict, List, Any
 from datetime import datetime, timedelta
 from collections import deque
+from sklearn.preprocessing import StandardScaler # Import StandardScaler
 
 import sys
 
@@ -230,9 +231,15 @@ def isolated_trader(temp_dir, test_config, mock_logging, initial_balance: float 
         mock_response.raise_for_status.return_value = None
         mock_requests_get.return_value = mock_response
 
+        # Instantiate ContinuousAutoTrader within the patch context
         trader = ContinuousAutoTrader()
-        # The trader's attributes are now initialized from the mocked settings
-        # No need to override them directly here unless a test specifically requires it
+        
+        # Explicitly set model and scaler after instantiation
+        # This ensures the test's mocks are used, overriding any real ones created in __init__
+        trader.model = Mock() # A generic mock for the model
+        trader.feature_scaler = Mock(spec=StandardScaler) # A mock scaler
+        trader.scalers_fitted = True # Manually set to True as we are mocking the scaler
+        
         trader.training_data = deque(maxlen=trader.max_training_samples) # Ensure deque is initialized
 
         yield trader

@@ -226,22 +226,24 @@ class TestDataManagement:
                 "low24h": "44000"
             }]
             
-            # Record time before collection
-            before_time = datetime.now()
+            # Record time before collection (in UTC)
+            before_time = datetime.now(timezone.utc)
             
             isolated_trader.collect_and_store_data()
             
-            # Record time after collection
-            after_time = datetime.now()
+            # Record time after collection (in UTC)
+            after_time = datetime.now(timezone.utc)
             
             # Check timestamp is within reasonable range
             latest_data = isolated_trader.training_data[-1]
             # The timestamp is now an integer (Unix timestamp in ms)
             data_timestamp_ms = latest_data['timestamp']
-            data_datetime = datetime.fromtimestamp(data_timestamp_ms / 1000, tz=timezone.utc) # Convert to datetime object
+            # Convert before_time and after_time to Unix timestamps in milliseconds for accurate comparison
+            before_time_ms = int(before_time.timestamp() * 1000)
+            after_time_ms = int(after_time.timestamp() * 1000)
             
-            # Allow a small buffer for time differences
-            assert before_time.timestamp() <= data_datetime.timestamp() <= after_time.timestamp() + 1 # Add 1 second buffer
+            # Allow a small buffer for time differences (e.g., 1 second = 1000 milliseconds)
+            assert before_time_ms <= data_timestamp_ms <= after_time_ms + 1000 # Add 1 second buffer in ms
     
     def test_data_integrity_validation(self, isolated_trader):
         """Test data integrity validation."""

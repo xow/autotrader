@@ -44,7 +44,7 @@ class LSTMModel:
         self.model.compile(
             optimizer=tf.keras.optimizers.Adam(learning_rate=0.001),
             loss='binary_crossentropy',
-            metrics=['accuracy']
+            metrics=['accuracy', 'mae']
         )
         
         logger.info("LSTM model created successfully")
