@@ -237,8 +237,8 @@ def isolated_trader(temp_dir, test_config, mock_logging, initial_balance: float 
         # Explicitly set model and scaler after instantiation
         # This ensures the test's mocks are used, overriding any real ones created in __init__
         trader.model = Mock() # A generic mock for the model
-        trader.feature_scaler = Mock(spec=StandardScaler) # A mock scaler
-        trader.scalers_fitted = True # Manually set to True as we are mocking the scaler
+        trader.feature_scaler = StandardScaler() # A real scaler
+        trader.scalers_fitted = False # Manually set to False
         
         trader.training_data = deque(maxlen=trader.max_training_samples) # Ensure deque is initialized
 

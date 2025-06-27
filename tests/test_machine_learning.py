@@ -189,10 +189,6 @@ class TestMachineLearningComponents:
         features = isolated_trader.prepare_features(test_data_point)
         
         # Transform features
-        # Mock the return value of transform to be a numpy array with the correct shape and no NaNs
-        mock_scaled_features_array = np.zeros((1, isolated_trader.settings.ml.feature_count))
-        isolated_trader.feature_scaler.transform.return_value = mock_scaled_features_array
-        
         scaled_features = isolated_trader.feature_scaler.transform(np.array(features).reshape(1, -1))
         
         assert scaled_features.shape == (1, isolated_trader.settings.ml.feature_count)
@@ -277,14 +273,16 @@ class TestMachineLearningComponents:
         
         # Explicitly set model and scaler here to ensure they are not None
         isolated_trader.model = mock_tensorflow["model"]
-        isolated_trader.feature_scaler = Mock(spec=StandardScaler) # Create a mock scaler directly
+        isolated_trader.feature_scaler = Mock(spec=StandardScaler)
+        isolated_trader.feature_scaler.transform.return_value = np.zeros((1, 12))
         isolated_trader.scalers_fitted = True
         
         # Mock model prediction
         isolated_trader.model.predict.return_value = np.array([[0.8]]) # Use isolated_trader.model directly
         
         print(f"DEBUG: test_prediction_generation isolated_trader ID: {id(isolated_trader)}")
-        prediction = isolated_trader.predict_trade_signal(mock_market_data[0])
+        data_with_indicators = isolated_trader.calculate_technical_indicators(sample_training_data)
+        prediction = isolated_trader.predict_trade_signal(data_with_indicators[-1])
         
         assert "signal" in prediction
         assert "confidence" in prediction
@@ -294,6 +292,7 @@ class TestMachineLearningComponents:
         assert 0 <= prediction["confidence"] <= 1
         
         # High confidence should result in BUY signal
+        print(f"DEBUG: signal={prediction['signal']}, confidence={prediction['confidence']}, buy_threshold={isolated_trader.settings.buy_confidence_threshold}")
         assert prediction["signal"] == "BUY"
         assert prediction["confidence"] == 0.8
     
@@ -302,6 +301,8 @@ class TestMachineLearningComponents:
         isolated_trader.training_data = deque(sample_training_data, maxlen=isolated_trader.max_training_samples)
         isolated_trader.scalers_fitted = True
         isolated_trader.model = mock_tensorflow["model"]
+        isolated_trader.feature_scaler = Mock(spec=StandardScaler)
+        isolated_trader.feature_scaler.transform.return_value = np.zeros((1, isolated_trader.settings.ml.feature_count))
         
         # Test different confidence levels
         test_cases = [
@@ -312,10 +313,11 @@ class TestMachineLearningComponents:
             (0.6, "HOLD"),   # Slightly high but not high enough -> HOLD
         ]
         
+        data_with_indicators = isolated_trader.calculate_technical_indicators(sample_training_data)
         for confidence, expected_signal in test_cases:
             mock_tensorflow["model"].predict.return_value = np.array([[confidence]])
             
-            prediction = isolated_trader.predict_trade_signal(mock_market_data)
+            prediction = isolated_trader.predict_trade_signal(data_with_indicators[-1])
             
             assert prediction["signal"] == expected_signal
             assert prediction["confidence"] == confidence

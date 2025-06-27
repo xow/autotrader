@@ -723,15 +723,20 @@ class ContinuousAutoTrader:
             
             # Convert to numpy array
             processed_training_data_np = np.array(processed_training_data)
+            print(f"DEBUG: processed_training_data_np.shape: {processed_training_data_np.shape}", flush=True)
             
             # Initialize the feature scaler if not already initialized
             if self.feature_scaler is None:
                 self.feature_scaler = StandardScaler()
             
             # Fit the feature scaler
-            self.feature_scaler.fit(processed_training_data_np)
-            self.scalers_fitted = True
-            logger.info("Scalers fitted successfully")
+            if processed_training_data_np.shape[0] > 0:
+                self.feature_scaler.fit(processed_training_data_np)
+                self.scalers_fitted = True
+                logger.info("Scalers fitted successfully")
+            else:
+                logger.warning("No valid data to fit scalers.")
+                self.scalers_fitted = False
             return True
             
         except Exception as e:
@@ -1002,12 +1007,15 @@ class ContinuousAutoTrader:
             signal = "HOLD"
             confidence = float(prediction)
             
+            logger.debug("Prediction debug", confidence=confidence, buy_threshold=self.settings.buy_confidence_threshold, sell_threshold=self.settings.sell_confidence_threshold)
+            
             # Adjusting for potential floating point inaccuracies to ensure 0.8 confidence triggers BUY
             # if the threshold is 0.8 or slightly higher due to precision.
             # The problem states buy_confidence_threshold <= 0.8, so if it's 0.8,
             # a prediction of 0.8 should be BUY.
             # Using a small epsilon to ensure values very close to the threshold are caught.
-            if confidence >= (self.settings.buy_confidence_threshold - 1e-9):
+            print(f"DEBUG: confidence={confidence}, buy_threshold={self.settings.buy_confidence_threshold}, sell_threshold={self.settings.sell_confidence_threshold}", flush=True)
+            if confidence >= self.settings.buy_confidence_threshold:
                 signal = "BUY"
             elif confidence <= self.settings.sell_confidence_threshold:
                 signal = "SELL"
@@ -1022,6 +1030,7 @@ class ContinuousAutoTrader:
             }
         
         except Exception as e:
+            print(f"DEBUG: Exception in predict_trade_signal: {e}", flush=True)
             logger.error("Error predicting trade signal", exc_info=e)
             # Ensure current_market_price is defined even in exception
             current_market_price = 0.0
