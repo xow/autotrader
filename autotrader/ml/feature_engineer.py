@@ -260,11 +260,10 @@ class FeatureEngineer(BaseEstimator, TransformerMixin):
         if self.config.use_rolling_stats:
             features_df = self._add_rolling_statistics(features_df)
         
-        # Remove original columns and keep only engineered features
-        exclude_cols = ['price', 'volume', 'timestamp', 'close', 'open', 'high', 'low', 'vol', 'time']
-        feature_cols = [col for col in features_df.columns if col not in exclude_cols]
-        
-        result_df = features_df[feature_cols].copy()
+        # Select only numeric columns for the final feature set
+        # This ensures that non-numeric columns like 'marketId' are excluded before scaling.
+        numeric_cols = features_df.select_dtypes(include=np.number).columns.tolist()
+        result_df = features_df[numeric_cols].copy()
         
         # Handle missing values
         result_df = result_df.ffill().bfill().fillna(0)

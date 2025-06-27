@@ -260,11 +260,15 @@ def isolated_trader(temp_dir, test_config, mock_logging, initial_balance: float 
         # Instantiate ContinuousAutoTrader within the patch context
         trader = ContinuousAutoTrader()
         
-        # Explicitly set model and scaler after instantiation
+        # Explicitly ensure FeatureEngineer is not fitted for tests expecting raw features
+        # This overrides any fitting that might occur during ContinuousAutoTrader.__init__
+        # (e.g., if scalers.pkl somehow exists or is mocked to exist)
+        trader.feature_engineer.is_fitted_ = False
+        trader.scalers_fitted = False
+        
+        # Explicitly set model after instantiation
         # This ensures the test's mocks are used, overriding any real ones created in __init__
         trader.model = Mock() # A generic mock for the model
-        # Removed explicit setting of trader.feature_scaler and trader.scalers_fitted
-        # as FeatureEngineer now manages its own internal scaler.
         
         trader.training_data = deque(maxlen=trader.max_training_samples) # Ensure deque is initialized
 

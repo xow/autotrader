@@ -450,9 +450,13 @@ class TestContinuousAutoTrader:
     
     def test_lstm_training_with_sufficient_data(self, isolated_trader, sample_training_data, mock_tensorflow):
         """Test LSTM model training with sufficient data."""
-        isolated_trader.training_data = sample_training_data
+        isolated_trader.training_data = deque(sample_training_data, maxlen=isolated_trader.max_training_samples)
         isolated_trader.model = mock_tensorflow["model"]
-        isolated_trader.scalers_fitted = True
+        
+        # Ensure scalers are fitted before training the model
+        isolated_trader.fit_scalers()
+        assert isolated_trader.scalers_fitted
+        assert isolated_trader.feature_engineer.is_fitted_
         
         success = isolated_trader.train_model()
         

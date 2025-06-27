@@ -205,7 +205,11 @@ class TestMachineLearningComponents:
     def test_lstm_training_data_preparation(self, isolated_trader, sample_training_data):
         """Test preparation of sequential data for LSTM training."""
         isolated_trader.training_data = deque(sample_training_data, maxlen=isolated_trader.max_training_samples)
-        isolated_trader.scalers_fitted = True
+        
+        # Ensure scalers are fitted before preparing LSTM training data
+        isolated_trader.fit_scalers()
+        assert isolated_trader.scalers_fitted
+        assert isolated_trader.feature_engineer.is_fitted_
         
         sequences, labels = isolated_trader.prepare_lstm_training_data()
         
@@ -243,7 +247,11 @@ class TestMachineLearningComponents:
         """Test the complete model training process."""
         isolated_trader.training_data = deque(sample_training_data, maxlen=isolated_trader.max_training_samples)
         isolated_trader.model = mock_tensorflow["model"]
-        isolated_trader.scalers_fitted = True
+        
+        # Fit scalers before training the model
+        isolated_trader.fit_scalers()
+        assert isolated_trader.scalers_fitted
+        assert isolated_trader.feature_engineer.is_fitted_
         
         # Mock successful training
         mock_tensorflow["model"].fit.return_value.history = {
@@ -269,19 +277,21 @@ class TestMachineLearningComponents:
     def test_prediction_generation(self, isolated_trader, mock_market_data, sample_training_data, mock_tensorflow):
         """Test ML prediction generation."""
         # Setup trader with proper data and model
-        isolated_trader.training_data = sample_training_data
+        isolated_trader.training_data = deque(sample_training_data, maxlen=isolated_trader.max_training_samples)
         
-        # Explicitly set model and scaler here to ensure they are not None
+        # Fit scalers before prediction
+        isolated_trader.fit_scalers()
+        assert isolated_trader.scalers_fitted
+        assert isolated_trader.feature_engineer.is_fitted_
+        
+        # Explicitly set model here to ensure it is not None
         isolated_trader.model = mock_tensorflow["model"]
-        isolated_trader.feature_scaler = Mock(spec=StandardScaler)
-        isolated_trader.feature_scaler.transform.return_value = np.zeros((1, 12))
-        isolated_trader.scalers_fitted = True
         
         # Mock model prediction
         isolated_trader.model.predict.return_value = np.array([[0.8]]) # Use isolated_trader.model directly
         
         print(f"DEBUG: test_prediction_generation isolated_trader ID: {id(isolated_trader)}")
-        data_with_indicators = isolated_trader.calculate_technical_indicators(sample_training_data)
+        data_with_indicators = isolated_trader.calculate_technical_indicators(list(isolated_trader.training_data))
         prediction = isolated_trader.predict_trade_signal(data_with_indicators[-1])
         
         assert "signal" in prediction
@@ -299,10 +309,13 @@ class TestMachineLearningComponents:
     def test_prediction_confidence_thresholds(self, isolated_trader, mock_market_data, sample_training_data, mock_tensorflow):
         """Test prediction confidence threshold logic."""
         isolated_trader.training_data = deque(sample_training_data, maxlen=isolated_trader.max_training_samples)
-        isolated_trader.scalers_fitted = True
+        
+        # Fit scalers before prediction
+        isolated_trader.fit_scalers()
+        assert isolated_trader.scalers_fitted
+        assert isolated_trader.feature_engineer.is_fitted_
+        
         isolated_trader.model = mock_tensorflow["model"]
-        isolated_trader.feature_scaler = Mock(spec=StandardScaler)
-        isolated_trader.feature_scaler.transform.return_value = np.zeros((1, isolated_trader.settings.ml.feature_count))
         
         # Test different confidence levels
         test_cases = [
@@ -313,7 +326,7 @@ class TestMachineLearningComponents:
             (0.6, "HOLD"),   # Slightly high but not high enough -> HOLD
         ]
         
-        data_with_indicators = isolated_trader.calculate_technical_indicators(sample_training_data)
+        data_with_indicators = isolated_trader.calculate_technical_indicators(list(isolated_trader.training_data))
         for confidence, expected_signal in test_cases:
             mock_tensorflow["model"].predict.return_value = np.array([[confidence]])
             
@@ -352,7 +365,11 @@ class TestMachineLearningComponents:
         
         # Setup minimal required data
         isolated_trader.training_data = deque([{"price": 100 + i, "volume": 50, "marketId": "BTC-AUD", "lastPrice": "100", "bestBid": "95", "bestAsk": "105", "high24h": "110", "low24h": "90"} for i in range(50)], maxlen=isolated_trader.max_training_samples)
-        isolated_trader.scalers_fitted = True
+        
+        # Fit scalers before training
+        isolated_trader.fit_scalers()
+        assert isolated_trader.scalers_fitted
+        assert isolated_trader.feature_engineer.is_fitted_
         
         success = isolated_trader.train_model()
         
