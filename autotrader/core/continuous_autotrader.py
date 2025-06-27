@@ -14,6 +14,7 @@ from collections import deque
 import logging
 import structlog
 import pandas as pd
+from sklearn.preprocessing import StandardScaler # Import StandardScaler
 
 # Import FeatureEngineer and FeatureConfig
 from autotrader.ml.feature_engineer import FeatureEngineer, FeatureConfig
@@ -106,8 +107,7 @@ class ContinuousAutoTrader:
         self._training_data_deque = deque(maxlen=self.sequence_length) # Changed to sequence_length for buffer
         self._model_summary_logged = False
         self._data_buffer = deque(maxlen=self.sequence_length)
-        self.scalers_fitted = False
-        self.feature_scaler = None
+        self.scalers_fitted = False # Initialize to False, will be updated by load_scalers or fit_scalers
         
         # Initialize FeatureEngineer
         self.feature_engineer = FeatureEngineer(config=FeatureConfig(
@@ -139,6 +139,9 @@ class ContinuousAutoTrader:
             use_rolling_stats=self.settings.ml.use_rolling_stats
         ))
         
+        # Load scalers after feature_engineer is initialized
+        self.feature_scaler = self.load_scalers() # This will also set self.scalers_fitted
+        
         # Setup signal handlers for graceful shutdown
         self._setup_signal_handlers()
         logger.debug("ContinuousAutoTrader __init__ completed.")
@@ -147,6 +150,11 @@ class ContinuousAutoTrader:
         # Only load state if initial_balance was not explicitly provided
         if initial_balance is None:
             self.load_state()
+        
+        # If scalers were loaded successfully, update feature_count in settings
+        if self.scalers_fitted:
+            self.settings.ml.feature_count = len(self.feature_engineer.get_feature_names())
+            logger.info("Updated settings.ml.feature_count based on loaded scalers", feature_count=self.settings.ml.feature_count)
         
         # Removed model initialization here, test will provide it
         # if self.model is None:
@@ -320,15 +328,18 @@ class ContinuousAutoTrader:
                 self.feature_engineer.scaler = scalers['feature_engineer_scaler']
                 self.feature_engineer.feature_names_ = scalers['feature_names']
                 self.feature_engineer.is_fitted_ = True # Set to True on successful load
+                self.scalers_fitted = True # Also update ContinuousAutoTrader's status
             logger.info("Scalers loaded successfully")
         except FileNotFoundError:
             logger.info("No scalers file found, creating new scalers")
             self.feature_engineer._init_scaler() # Initialize a new scaler
             self.feature_engineer.is_fitted_ = False # Not fitted yet
+            self.scalers_fitted = False # Not fitted yet
         except Exception as e:
             logger.error("Error loading scalers", exc_info=e)
             self.feature_engineer._init_scaler() # Initialize a new scaler on error
             self.feature_engineer.is_fitted_ = False # Not fitted yet
+            self.scalers_fitted = False # Not fitted yet
         return self.feature_engineer.scaler # Return the loaded scaler or a new one
 
     def fetch_market_data(self) -> List[Dict[str, Any]]:
@@ -698,7 +709,9 @@ class ContinuousAutoTrader:
             if self.feature_engineer.is_fitted_:
                 return [0.0] * len(self.feature_engineer.get_feature_names())
             else:
-                return [0.0] * self.settings.ml.feature_count # Fallback to configured feature count
+                # Fallback to configured feature count, or a reasonable default if not yet set
+                fallback_feature_count = self.settings.ml.feature_count if self.settings.ml.feature_count > 0 else 12
+                return [0.0] * fallback_feature_count
 
     def _update_feature_buffer(self, market_data: Dict[str, Any]) -> None:
         """Update the feature buffer with the latest market data."""
@@ -753,11 +766,16 @@ class ContinuousAutoTrader:
             self.feature_engineer.fit(list(self.training_data))
             
             logger.info("FeatureEngineer fitted successfully")
+            self.scalers_fitted = True # Set to True after successful fitting
+            # Update the feature_count in settings after fitting
+            self.settings.ml.feature_count = len(self.feature_engineer.get_feature_names())
+            logger.info("Updated settings.ml.feature_count after fitting", feature_count=self.settings.ml.feature_count)
             return True
             
         except Exception as e:
             logger.error("Error fitting FeatureEngineer", exc_info=e)
             self.feature_engineer.is_fitted_ = False
+            self.scalers_fitted = False # Set to False on error
             return False
 
     def prepare_lstm_training_data(self) -> Tuple[np.ndarray, np.ndarray]:
