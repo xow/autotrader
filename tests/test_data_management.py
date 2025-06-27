@@ -404,6 +404,15 @@ class TestDataManagement:
         assert all('price' in item for item in loaded_data)
         assert all('volume' in item for item in loaded_data)
         
-        # Feature preparation should handle missing fields with defaults
+        # Populate training_data with sufficient data for scaler fitting
+        # This is crucial for FeatureEngineer to correctly determine all feature names
+        # and for settings.ml.feature_count to be updated.
+        isolated_trader.training_data = deque(sample_training_data, maxlen=isolated_trader.max_training_samples)
+        
+        # Fit scalers to ensure feature_engineer.feature_names_ is populated
+        # and settings.ml.feature_count is updated to the correct number of features.
+        isolated_trader.fit_scalers()
+        
+        # Feature preparation should now handle missing fields with defaults and produce the full feature set
         features = isolated_trader.prepare_features(loaded_data[0])
         assert len(features) == isolated_trader.settings.ml.feature_count  # Should still have all features with defaults

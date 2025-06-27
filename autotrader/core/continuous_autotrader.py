@@ -657,45 +657,38 @@ class ContinuousAutoTrader:
             if not data_point:
                 raise ValueError("Empty data point provided")
             
-            # If FeatureEngineer is not fitted, we cannot transform properly.
-            # In this case, we'll extract features directly from the data_point
-            # based on the expected feature names, to allow tests to proceed with validation.
-            if not self.feature_engineer.is_fitted_:
-                # For testing scenarios where FeatureEngineer is not fitted,
-                # we explicitly use a predefined set of 12 features to match test expectations.
-                # This bypasses the FeatureEngineer's internal feature name generation
-                # which might produce more features based on its configuration.
-                expected_feature_names = [
-                    'price', 'volume', 'spread', 'sma_5', 'sma_20', 'ema_12',
-                    'ema_26', 'rsi', 'macd', 'macd_signal', 'bb_upper', 'bb_lower'
-                ]
-                logger.warning("FeatureEngineer not fitted. Using a predefined list of features for extraction to match test expectations.")
-
-                features = []
-                for feature_name in expected_feature_names:
-                    value = data_point.get(feature_name, 0.0)
-                    try:
-                        features.append(float(value))
-                    except (ValueError, TypeError):
-                        logger.warning(f"Could not convert feature '{feature_name}' to float. Using 0.0.", feature_name=feature_name, value=value)
-                        features.append(0.0)
-                
-                logger.debug("FeatureEngineer not fitted. Returning raw features from data_point for testing.", first_few_features=features[:5])
-                return features
-
             # Convert single data point to a list of dicts for FeatureEngineer
             data_for_fe = [data_point]
             
-            # Transform features using FeatureEngineer
-            # The transform method returns a numpy array of shape (num_samples, num_features)
-            transformed_features = self.feature_engineer.transform(data_for_fe)
+            # Generate raw features using FeatureEngineer's internal method
+            # This method handles adding all configured features and filling missing values.
+            # It does not require the scaler to be fitted.
+            raw_features_df = self.feature_engineer._generate_all_features(pd.DataFrame(data_for_fe))
             
-            # Extract the single feature vector
-            features = transformed_features[0].tolist()
+            # If FeatureEngineer is not fitted, its feature_names_ might be empty or incomplete.
+            # We need to ensure that the feature_names_ are populated correctly
+            # before attempting to reindex or transform.
+            if not self.feature_engineer.feature_names_:
+                # Populate feature_names_ from the generated raw features.
+                # This ensures that subsequent calls to transform or reindex have the correct feature set.
+                self.feature_engineer.feature_names_ = list(raw_features_df.columns)
+                logger.debug("FeatureEngineer feature names initialized from generated features.")
             
-            # Log the first few features for debugging (without sensitive data)
-            if len(features) > 0:
-                logger.debug("Prepared features using FeatureEngineer", first_few_features=features[:5])
+            # Reindex to ensure all expected features are present, filling missing with 0.0.
+            # Use the feature_names_ from the feature_engineer, which should now be populated.
+            features_df_reindexed = raw_features_df.reindex(columns=self.feature_engineer.feature_names_, fill_value=0.0)
+            
+            # Convert to numpy array
+            features_array = features_df_reindexed.values
+            
+            # Apply scaling only if the FeatureEngineer's scaler is fitted
+            if self.feature_engineer.is_fitted_:
+                scaled_features = self.feature_engineer.scaler.transform(features_array)
+                features = scaled_features[0].tolist()
+                logger.debug("Prepared features using fitted FeatureEngineer and scaler", first_few_features=features[:5])
+            else:
+                features = features_array[0].tolist()
+                logger.warning("FeatureEngineer not fitted. Returning raw (unscaled) features.", first_few_features=features[:5])
             
             return features
         
@@ -703,13 +696,11 @@ class ContinuousAutoTrader:
             logger.exception("Error preparing features with FeatureEngineer", exc_info=e)
             # Fallback to returning a zero vector of expected length on error
             # This length should ideally come from feature_engineer.get_feature_names()
-            # but for now, we'll use a placeholder if not fitted.
-            if self.feature_engineer.is_fitted_:
-                return [0.0] * len(self.feature_engineer.get_feature_names())
-            else:
-                # Fallback to configured feature count, or a reasonable default if not yet set
-                fallback_feature_count = self.settings.ml.feature_count if self.settings.ml.feature_count > 0 else 12
-                return [0.0] * fallback_feature_count
+            # or settings.ml.feature_count.
+            # If feature_engineer.feature_names_ is populated, use its length.
+            # Otherwise, fallback to settings.ml.feature_count or a default of 96.
+            fallback_feature_count = len(self.feature_engineer.feature_names_) if self.feature_engineer.feature_names_ else (self.settings.ml.feature_count if self.settings.ml.feature_count > 0 else 96)
+            return [0.0] * fallback_feature_count
 
     def _update_feature_buffer(self, market_data: Dict[str, Any]) -> None:
         """Update the feature buffer with the latest market data."""
