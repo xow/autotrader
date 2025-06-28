@@ -171,7 +171,10 @@ class MLConfig:
             'timestamp': pd.to_datetime(pd.date_range(start='2023-01-01', periods=dummy_data_points, freq='H')),
             'high': np.random.rand(dummy_data_points) * 10000 + 100, # Add high/low for hl_volatility
             'low': np.random.rand(dummy_data_points) * 10000 - 100,
-            'spread': np.random.rand(dummy_data_points) * 10 # Add spread to dummy data
+            'spread': np.random.rand(dummy_data_points) * 10, # Add spread to dummy data
+            'marketId': 'BTC-AUD', # Add marketId to dummy data for completeness
+            'bid': np.random.rand(dummy_data_points) * 10000 - 50, # Add bid
+            'ask': np.random.rand(dummy_data_points) * 10000 + 50 # Add ask
         }
         dummy_df = pd.DataFrame(dummy_data)
         

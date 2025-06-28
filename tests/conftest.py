@@ -194,7 +194,7 @@ def isolated_trader(temp_dir, test_config, mock_logging, initial_balance: float 
     mock_settings_instance.config.ml.dense_units = 25
     mock_settings_instance.config.ml.epochs = 10
     mock_settings_instance.config.ml.batch_size = 16
-    mock_settings_instance.config.ml.feature_count = 96
+    mock_settings_instance.config.ml.feature_count = 96 # Set to the observed correct value
     mock_settings_instance.config.ml.volume_sma_period = 10 # Assuming a default value
     mock_settings_instance.config.ml.scaling_method = "standard" # Add scaling method
     mock_settings_instance.config.ml.sma_periods = [5, 10, 20, 50]
