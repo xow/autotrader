@@ -134,16 +134,11 @@ class TestMachineLearningComponents:
         data_point = {
             'price': 45000.0,
             'volume': 123.45,
+            'timestamp': 1678886400000, # Example timestamp in milliseconds
+            'high': 45100.0,
+            'low': 44900.0,
             'spread': 10.0,
-            'sma_5': 45050.0,
-            'sma_20': 44900.0,
-            'ema_12': 45020.0,
-            'ema_26': 44950.0,
-            'rsi': 65.5,
-            'macd': 15.2,
-            'macd_signal': 12.8,
-            'bb_upper': 45200.0,
-            'bb_lower': 44800.0
+            'marketId': 'BTC-AUD' # Add marketId for completeness
         }
         
         features = isolated_trader.prepare_features(data_point)
@@ -155,22 +150,39 @@ class TestMachineLearningComponents:
         # Check specific feature values
         assert features[0] == 45000.0  # price
         assert features[1] == 123.45   # volume
-        assert features[7] == 65.5     # rsi
+        assert features[12] == 50.0    # rsi (default to 50.0 for single data point)
     
     def test_feature_preparation_missing_values(self, isolated_trader):
         """Test feature preparation with missing values."""
         incomplete_data_point = {
             'price': 45000.0,
-            'volume': 123.45
+            'volume': 123.45,
+            'timestamp': 1678886400000, # Example timestamp in milliseconds
+            'high': 0.0, # Explicitly set to 0.0 or None if missing
+            'low': 0.0,   # Explicitly set to 0.0 or None if missing
+            'marketId': 'BTC-AUD' # Add marketId for completeness
             # Missing other features
         }
         
         features = isolated_trader.prepare_features(incomplete_data_point)
         
         assert len(features) == isolated_trader.settings.ml.feature_count
+        
+        # The first two features should be price and volume
         assert features[0] == 45000.0
         assert features[1] == 123.45
-        assert features[7] == 0.0  # Default RSI value should be 0.0 if not present
+        
+        # Dynamically find the index of 'rsi' and assert its value
+        feature_names = isolated_trader.feature_engineer.get_feature_names()
+        if 'rsi' in feature_names:
+            rsi_index = feature_names.index('rsi')
+            # When RSI is missing due to insufficient data, FeatureEngineer sets it to 50.0
+            # When a column is entirely missing and filled by reindex, it's 0.0.
+            # Given the test provides 'price' and 'volume', FeatureEngineer will attempt to calculate RSI.
+            # For a single data point, RSI will be 50.0 (neutral).
+            assert features[rsi_index] == 50.0
+        else:
+            pytest.fail("RSI feature not found in engineered features.")
     
     def test_scaler_fitting_and_transformation(self, isolated_trader, sample_training_data):
         """Test scaler fitting and data transformation."""
@@ -290,7 +302,6 @@ class TestMachineLearningComponents:
         # Mock model prediction
         isolated_trader.model.predict.return_value = np.array([[0.8]]) # Use isolated_trader.model directly
         
-        print(f"DEBUG: test_prediction_generation isolated_trader ID: {id(isolated_trader)}")
         data_with_indicators = isolated_trader.calculate_technical_indicators(list(isolated_trader.training_data))
         prediction = isolated_trader.predict_trade_signal(data_with_indicators[-1])
         
@@ -302,7 +313,6 @@ class TestMachineLearningComponents:
         assert 0 <= prediction["confidence"] <= 1
         
         # High confidence should result in BUY signal
-        print(f"DEBUG: signal={prediction['signal']}, confidence={prediction['confidence']}, buy_threshold={isolated_trader.settings.buy_confidence_threshold}")
         assert prediction["signal"] == "BUY"
         assert prediction["confidence"] == 0.8
     

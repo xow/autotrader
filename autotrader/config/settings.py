@@ -10,7 +10,8 @@ from pathlib import Path
 from typing import Optional
 import logging
 
-from .config import Config, Environment, load_config, APIConfig, TradingConfig, MLConfig, OperationalConfig
+from .config import Config, Environment, APIConfig, TradingConfig, MLConfig, OperationalConfig
+# Removed explicit import of load_config as it will be removed from config.py
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +47,17 @@ class Settings:
     def _load_config(self):
         """Load configuration based on environment"""
         try:
-            self._config = load_config()
+            # Determine config path based on environment
+            env_name = os.getenv("AUTOTRADER_ENV", "development").lower()
+            try:
+                env = Environment(env_name)
+            except ValueError:
+                env = Environment.DEVELOPMENT
+            
+            config_dir = Path(__file__).parent
+            config_path = config_dir / f"config_{env.value}.json"
+            
+            self._config = Config.from_file(config_path)
             logger.info(f"Settings loaded for environment: {self._config.environment.value}")
         except Exception as e:
             logger.error("Failed to load configuration", exc_info=e)

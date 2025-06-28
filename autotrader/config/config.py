@@ -82,7 +82,7 @@ class MLConfig:
     shuffle: bool = False  # Don't shuffle time series
     
     # Feature configuration
-    feature_count: int = 12
+    feature_count: int = 0 # Will be dynamically calculated
     enable_technical_indicators: bool = True
     volume_sma_period: int = 10 # Default period for volume SMA
     
@@ -113,6 +113,74 @@ class MLConfig:
     lag_periods: Optional[List[int]] = field(default_factory=lambda: [1, 2, 3, 5, 10])
     use_rolling_stats: bool = True
     rolling_windows: Optional[List[int]] = field(default_factory=lambda: [5, 10, 20])
+
+    def __post_init__(self):
+        """Post-initialization validation and setup for MLConfig."""
+        self.feature_count = self._calculate_dynamic_feature_count()
+
+    def _calculate_dynamic_feature_count(self) -> int:
+        """
+        Dynamically calculates the number of features based on the MLConfig's
+        feature engineering settings.
+        """
+        # Import FeatureEngineer and FeatureConfig locally to avoid circular imports
+        from autotrader.ml.feature_engineer import FeatureEngineer, FeatureConfig
+        import pandas as pd
+        import numpy as np
+        
+        # Create a FeatureConfig instance from MLConfig's relevant fields
+        fe_config = FeatureConfig(
+            use_sma=self.use_sma,
+            sma_periods=self.sma_periods,
+            use_ema=self.use_ema,
+            ema_periods=self.ema_periods,
+            use_rsi=self.use_rsi,
+            rsi_period=self.rsi_period,
+            use_macd=self.use_macd,
+            macd_fast=self.macd_fast,
+            macd_slow=self.macd_slow,
+            macd_signal=self.macd_signal,
+            use_bollinger=self.use_bollinger,
+            bb_period=self.bb_period,
+            bb_std=self.bb_std,
+            use_volume_indicators=self.use_volume_indicators,
+            use_price_ratios=self.use_price_ratios,
+            use_price_differences=self.use_price_differences,
+            use_log_returns=self.use_log_returns,
+            use_volatility=self.use_volatility,
+            volatility_window=self.volatility_window,
+            use_time_features=self.use_time_features,
+            use_cyclical_encoding=self.use_cyclical_encoding,
+            use_lag_features=self.use_lag_features,
+            lag_periods=self.lag_periods,
+            use_rolling_stats=self.use_rolling_stats,
+            rolling_windows=self.rolling_windows,
+            scaling_method=self.scaling_method # Pass scaling method as well
+        )
+        
+        # Instantiate a dummy FeatureEngineer
+        dummy_fe = FeatureEngineer(config=fe_config)
+        
+        # Create a dummy DataFrame with enough data points for all indicators
+        # The maximum period for any indicator or rolling stat is 50 (sma_periods, ema_periods, rolling_windows)
+        # plus 26 for macd_slow, plus 14 for rsi/atr. Let's use 100 for safety.
+        dummy_data_points = 100
+        dummy_data = {
+            'price': np.random.rand(dummy_data_points) * 10000,
+            'volume': np.random.rand(dummy_data_points) * 1000,
+            'timestamp': pd.to_datetime(pd.date_range(start='2023-01-01', periods=dummy_data_points, freq='H')),
+            'high': np.random.rand(dummy_data_points) * 10000 + 100, # Add high/low for hl_volatility
+            'low': np.random.rand(dummy_data_points) * 10000 - 100,
+            'spread': np.random.rand(dummy_data_points) * 10 # Add spread to dummy data
+        }
+        dummy_df = pd.DataFrame(dummy_data)
+        
+        # Generate features using the dummy FeatureEngineer
+        # We use _generate_all_features because it doesn't require fitting the scaler
+        # and gives us the raw feature columns.
+        features_df = dummy_fe._generate_all_features(dummy_df)
+        
+        return len(features_df.columns)
 
 
 @dataclass
@@ -331,27 +399,3 @@ class Config:
             'ml': asdict(self.ml),
             'operations': asdict(self.operations)
         }
-
-
-def load_config(config_path: Optional[Union[str, Path]] = None) -> Config:
-    """
-    Load configuration from file or create default configuration.
-    
-    Args:
-        config_path: Path to configuration file. If None, looks for environment-specific config.
-    
-    Returns:
-        Config instance
-    """
-    if config_path is None:
-        # Try to determine environment and load appropriate config
-        env_name = os.getenv("AUTOTRADER_ENV", "development").lower()
-        try:
-            env = Environment(env_name)
-        except ValueError:
-            env = Environment.DEVELOPMENT
-        
-        config_dir = Path(__file__).parent
-        config_path = config_dir / f"config_{env.value}.json"
-    
-    return Config.from_file(config_path)

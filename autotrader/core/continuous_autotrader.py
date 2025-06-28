@@ -139,6 +139,57 @@ class ContinuousAutoTrader:
             use_rolling_stats=self.settings.ml.use_rolling_stats
         ))
         
+        # Dynamically determine all possible feature names from FeatureEngineer's configuration
+        # This ensures that feature_names_ is always complete, even if initial training data is not.
+        temp_fe_config = FeatureConfig(
+            scaling_method=self.settings.ml.scaling_method,
+            sma_periods=self.settings.ml.sma_periods,
+            ema_periods=self.settings.ml.ema_periods,
+            rsi_period=self.settings.ml.rsi_period,
+            macd_fast=self.settings.ml.macd_fast,
+            macd_slow=self.settings.ml.macd_slow,
+            macd_signal=self.settings.ml.macd_signal,
+            bb_period=self.settings.ml.bb_period,
+            bb_std=self.settings.ml.bb_std,
+            volatility_window=self.settings.ml.volatility_window,
+            lag_periods=self.settings.ml.lag_periods,
+            rolling_windows=self.settings.ml.rolling_windows,
+            use_sma=self.settings.ml.use_sma,
+            use_ema=self.settings.ml.use_ema,
+            use_rsi=self.settings.ml.use_rsi,
+            use_macd=self.settings.ml.use_macd,
+            use_bollinger=self.settings.ml.use_bollinger,
+            use_volume_indicators=self.settings.ml.use_volume_indicators,
+            use_price_ratios=self.settings.ml.use_price_ratios,
+            use_price_differences=self.settings.ml.use_price_differences,
+            use_log_returns=self.settings.ml.use_log_returns,
+            use_volatility=self.settings.ml.use_volatility,
+            use_time_features=self.settings.ml.use_time_features,
+            use_cyclical_encoding=self.settings.ml.use_cyclical_encoding,
+            use_lag_features=self.settings.ml.use_lag_features,
+            use_rolling_stats=self.settings.ml.use_rolling_stats
+        )
+        temp_fe = FeatureEngineer(config=temp_fe_config)
+        
+        # Create a dummy DataFrame with all possible raw input columns
+        dummy_data_points = 100 # Needs enough data for all indicators
+        dummy_data = {
+            'price': np.random.rand(dummy_data_points) * 10000,
+            'volume': np.random.rand(dummy_data_points) * 1000,
+            'timestamp': pd.to_datetime(pd.date_range(start='2023-01-01', periods=dummy_data_points, freq='H')),
+            'high': np.random.rand(dummy_data_points) * 10000 + 100,
+            'low': np.random.rand(dummy_data_points) * 10000 - 100,
+            'spread': np.random.rand(dummy_data_points) * 10,
+            'marketId': 'BTC-AUD' # Include marketId as it might be in raw data
+        }
+        dummy_df = pd.DataFrame(dummy_data)
+        
+        # Generate features to get all possible feature names
+        full_features_df = temp_fe._generate_all_features(dummy_df)
+        self.feature_engineer.feature_names_ = list(full_features_df.columns)
+        self.feature_engineer.is_fitted_ = True # Mark as fitted for feature names
+        logger.info("FeatureEngineer feature names initialized with full set", count=len(self.feature_engineer.feature_names_))
+
         # Load scalers after feature_engineer is initialized
         self.feature_scaler = self.load_scalers() # This will also set self.scalers_fitted
         
@@ -150,11 +201,6 @@ class ContinuousAutoTrader:
         # Only load state if initial_balance was not explicitly provided
         if initial_balance is None:
             self.load_state()
-        
-        # If scalers were loaded successfully, update feature_count in settings
-        if self.scalers_fitted:
-            self.settings.ml.feature_count = len(self.feature_engineer.get_feature_names())
-            logger.info("Updated settings.ml.feature_count based on loaded scalers", feature_count=self.settings.ml.feature_count)
         
         # Removed model initialization here, test will provide it
         # if self.model is None:
@@ -551,7 +597,7 @@ class ContinuousAutoTrader:
             if df['price'].isnull().any():
                 logger.warning("Invalid price data detected after numeric conversion. Skipping indicator calculation.", invalid_prices=df[df['price'].isnull()]['price'].tolist())
                 return []
-
+            
             # Fill NaN prices and volumes with previous valid price or 0.0
             df['price'] = df['price'].ffill().fillna(0.0)
             df['volume'] = df['volume'].ffill().fillna(0.0)
@@ -650,7 +696,7 @@ class ContinuousAutoTrader:
         except Exception as e:
             logger.error("Error creating LSTM model", exc_info=e)
             return None
-
+ 
     def prepare_features(self, data_point: dict) -> list:
         """Prepare feature vector from a single data point using FeatureEngineer."""
         try:
@@ -689,6 +735,9 @@ class ContinuousAutoTrader:
             else:
                 features = features_array[0].tolist()
                 logger.warning("FeatureEngineer not fitted. Returning raw (unscaled) features.", first_few_features=features[:5])
+            
+            logger.debug("Prepared features count", count=len(features))
+            logger.debug("Prepared feature names", names=self.feature_engineer.get_feature_names())
             
             return features
         
@@ -756,9 +805,6 @@ class ContinuousAutoTrader:
             
             logger.info("FeatureEngineer fitted successfully")
             self.scalers_fitted = True # Set to True after successful fitting
-            # Update the feature_count in settings after fitting
-            self.settings.ml.feature_count = len(self.feature_engineer.get_feature_names())
-            logger.info("Updated settings.ml.feature_count after fitting", feature_count=self.settings.ml.feature_count)
             return True
             
         except Exception as e:
