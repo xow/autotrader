@@ -60,6 +60,7 @@ class APIError(AutotraderError):
         status_code: Optional[int] = None,
         response_data: Optional[Any] = None,
         endpoint: Optional[str] = None,
+        response_text: Optional[str] = None, # Add this parameter
         context: Optional[Dict[str, Any]] = None
     ):
         # Prioritize status_code from context if available
@@ -70,17 +71,22 @@ class APIError(AutotraderError):
             status_code = response_data.status_code
             response_data = response_data.text # Store text content if it was a Response object
 
+        # If response_text is provided, use it as response_data
+        if response_text is not None:
+            response_data = response_text
+
         # Merge specific API error context with general context
         full_context = {
             "status_code": status_code,
-            "response_data": response_data,
+            "response_data": response_data, # This will now be response_text if provided
             "endpoint": endpoint,
             **(context or {})
         }
         super().__init__(message, "API_ERROR", full_context)
         self.status_code = status_code
-        self.response_data = response_data
+        self.response_data = response_data # Store the processed response_data
         self.endpoint = endpoint
+        self.response_text = response_text # Store response_text for direct access if needed
 
 
 class APIConnectionError(APIError):
@@ -355,7 +361,8 @@ class NetworkError(AutotraderError):
         message: str,
         connection_type: Optional[str] = None,
         retry_count: Optional[int] = None,
-        context: Optional[Dict[str, Any]] = None # Add context parameter
+        original_exception: Optional[Exception] = None, # Add this
+        context: Optional[Dict[str, Any]] = None
     ):
         # Merge specific network error context with general context
         full_context = {
@@ -363,9 +370,13 @@ class NetworkError(AutotraderError):
             "retry_count": retry_count,
             **(context or {}) # Merge provided context
         }
+        if original_exception: # Add original_exception to context
+            full_context["original_exception"] = str(original_exception)
+
         super().__init__(message, "NETWORK_ERROR", full_context)
         self.connection_type = connection_type
         self.retry_count = retry_count
+        self.original_exception = original_exception # Store original exception
 
 
 class ValidationError(AutotraderError):
@@ -429,7 +440,8 @@ class NetworkTimeoutError(AutotraderError):
         message: str,
         timeout_duration: Optional[float] = None,
         operation: Optional[str] = None,
-        context: Optional[Dict[str, Any]] = None # Add context parameter
+        original_exception: Optional[Exception] = None, # Add this
+        context: Optional[Dict[str, Any]] = None
     ):
         """
         Initialize the NetworkTimeoutError.
@@ -446,9 +458,13 @@ class NetworkTimeoutError(AutotraderError):
             "error_type": "network_timeout",
             **(context or {}) # Merge provided context
         }
+        if original_exception: # Add original_exception to context
+            full_context["original_exception"] = str(original_exception)
+
         super().__init__(message, "NETWORK_TIMEOUT_ERROR", full_context)
         self.timeout_duration = timeout_duration
         self.operation = operation
+        self.original_exception = original_exception # Store original exception
         
     def __str__(self) -> str:
         """Return a string representation of the error."""

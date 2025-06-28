@@ -12,22 +12,53 @@ import os
 from typing import Dict, List, Optional, Tuple, Any, Union, Deque
 from collections import deque
 import logging
-import structlog
-import os
+import requests
+import signal
 import sys
-from sklearn.preprocessing import StandardScaler, MinMaxScaler
+import threading
+from datetime import datetime, timedelta, timezone
+import tensorflow as tf
+import numpy as np
+import json
+import time
+import pickle
+import os
+from typing import Dict, List, Optional, Tuple, Any, Union, Deque
+from collections import deque
+import logging
+from colorama import Fore, Style, init # Import colorama
+import structlog
 import pandas as pd
+from sklearn.preprocessing import StandardScaler
+
+# Initialize colorama
+init(autoreset=True)
+
+# Custom processor for coloring log output
+def add_coloring_processor(_, __, event_dict):
+    level = event_dict.get("level")
+    if level:
+        if level == "info":
+            event_dict["event"] = f"{Fore.GREEN}{event_dict['event']}{Style.RESET_ALL}"
+        elif level == "warning":
+            event_dict["event"] = f"{Fore.YELLOW}{event_dict['event']}{Style.RESET_ALL}"
+        elif level == "error":
+            event_dict["event"] = f"{Fore.RED}{event_dict['event']}{Style.RESET_ALL}"
+        elif level == "debug":
+            event_dict["event"] = f"{Fore.MAGENTA}{event_dict['event']}{Style.RESET_ALL}"
+    return event_dict
 
 # Configure structured logging
 structlog.configure(
     processors=[
-        structlog.processors.TimeStamper(fmt="iso"),
-        structlog.processors.JSONRenderer()
+        structlog.processors.TimeStamper(fmt="%Y-%m-%d %H:%M:%S", utc=False),
+        add_coloring_processor, # Add the coloring processor here
+        structlog.dev.ConsoleRenderer()
     ],
     context_class=dict,
     logger_factory=structlog.PrintLoggerFactory()
 )
-logger = structlog.get_logger()
+logger = structlog.get_logger(__name__)
 
 # Constants
 DEFAULT_CONFIG = {
@@ -48,55 +79,25 @@ except ImportError:
     print("TA-Lib not available, using manual calculations")
     TALIB_AVAILABLE = False
 
-# Configure logging for overnight operation
+# Configure standard logging to file
 logging.basicConfig(
-    level=logging.DEBUG,  # Set to DEBUG to see all messages
+    level=logging.INFO, # Set to INFO for general logging
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('autotrader.log'),
-        logging.StreamHandler()
+        logging.FileHandler('autotrader.log')
     ]
 )
 
-# Set log level for all loggers to DEBUG
+# Set log level for all loggers to INFO
 for logger_name in logging.root.manager.loggerDict:
-    logging.getLogger(logger_name).setLevel(logging.DEBUG)
-logger = logging.getLogger(__name__)
-
+    logging.getLogger(logger_name).setLevel(logging.INFO)
 
 # Import the Settings singleton
 from autotrader.config.settings import get_settings
-
-# Configure structured logging
-structlog.configure(
-    processors=[
-        structlog.processors.TimeStamper(fmt="iso"),
-        structlog.processors.JSONRenderer()
-    ],
-    context_class=dict,
-    logger_factory=structlog.PrintLoggerFactory()
-)
-logger = structlog.get_logger()
-
-# Configure logging for overnight operation
-logging.basicConfig(
-    level=logging.DEBUG,  # Set to DEBUG to see all messages
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('autotrader.log'),
-        logging.StreamHandler()
-    ]
-)
-
-# Set log level for all loggers to DEBUG
-for logger_name in logging.root.manager.loggerDict:
-    logging.getLogger(logger_name).setLevel(logging.DEBUG)
-logger = logging.getLogger(__name__)
-
+from autotrader.core.continuous_autotrader import ContinuousAutoTrader # Import from new location
 
 def main():
     import argparse
-    from autotrader.core.continuous_autotrader import ContinuousAutoTrader # Import from new location
     
     # Set up argument parsing
     parser = argparse.ArgumentParser(description='AutoTrader Bot - Continuous Cryptocurrency Trading')
@@ -116,9 +117,9 @@ def main():
     try:
         trader.run() # Call the main run loop
     except Exception as e:
-        logger.error(f"Error during trading logic execution: {e}")
+        logger.error(f"{Fore.RED}Error during trading logic execution: {e}{Style.RESET_ALL}")
     finally:
-        print("Trading completed.")
+        print("\n" + Fore.CYAN + Style.BRIGHT + "Trading session completed." + Style.RESET_ALL)
 
 if __name__ == "__main__":
     main()
