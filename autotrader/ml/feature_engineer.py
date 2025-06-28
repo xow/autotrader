@@ -259,7 +259,10 @@ class FeatureEngineer(BaseEstimator, TransformerMixin):
         
         if self.config.use_rolling_stats:
             features_df = self._add_rolling_statistics(features_df)
-        
+
+        # Add bid/ask related features if available
+        features_df = self._add_bid_ask_features(features_df)
+
         # Select only numeric columns for the final feature set
         # This ensures that non-numeric columns like 'marketId' are excluded before scaling.
         numeric_cols = features_df.select_dtypes(include=np.number).columns.tolist()
@@ -505,11 +508,18 @@ class FeatureEngineer(BaseEstimator, TransformerMixin):
         
         importances = model.feature_importances_
         return dict(zip(self.feature_names_, importances))
-    
+
+    def _add_bid_ask_features(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Add features derived from bid and ask prices."""
+        if 'bid' in df.columns and 'ask' in df.columns:
+            df['spread'] = df['ask'] - df['bid']
+            df['mid_price'] = (df['bid'] + df['ask']) / 2
+        return df
+
     def get_feature_names(self) -> List[str]:
         """Get names of engineered features."""
         return self.feature_names_.copy()
-    
+
     def inverse_transform_features(self, X: np.ndarray) -> np.ndarray:
         """
         Inverse transform scaled features back to original space.

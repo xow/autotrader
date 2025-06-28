@@ -15,6 +15,7 @@ from collections import deque # Import deque
 from sklearn.preprocessing import StandardScaler # Import StandardScaler
 from autotrader.utils.exceptions import NetworkError # Import NetworkError
 import requests # Import requests for mocking exceptions
+import pandas as pd # Import pandas
 
 # Import the autotrader module
 import sys
@@ -117,25 +118,40 @@ class TestContinuousAutoTrader:
         assert abs(indicators["sma_5"] - expected_sma_5) < 0.1
     
     def test_feature_preparation(self, isolated_trader):
-        """Test feature vector preparation from data point."""
-        data_point = {
-            "price": 45000,
-            "volume": 100,
-            "bid": 44995, # Add bid
-            "ask": 45005, # Add ask
-            "spread": 10,
-            "sma_5": 45050,
-            "sma_20": 44800,
-            "ema_12": 45020,
-            "ema_26": 44900,
-            "rsi": 65,
-            "macd": 15,
-            "macd_signal": 12,
-            "bb_upper": 45200,
-            "bb_lower": 44800
+        """Test feature vector preparation from data point, ensuring all features are generated."""
+        # Create a dummy DataFrame with enough data points to allow all features to be calculated
+        dummy_data_points = 100
+        dummy_data = {
+            'price': np.random.rand(dummy_data_points) * 10000,
+            'volume': np.random.rand(dummy_data_points) * 1000,
+            'timestamp': pd.to_datetime(pd.date_range(start='2023-01-01', periods=dummy_data_points, freq='H')),
+            'high': np.random.rand(dummy_data_points) * 10000 + 100,
+            'low': np.random.rand(dummy_data_points) * 10000 - 100,
+            'bid': np.random.rand(dummy_data_points) * 10000 - 50,
+            'ask': np.random.rand(dummy_data_points) * 10000 + 50,
+            'marketId': 'BTC-AUD'
         }
+        dummy_df = pd.DataFrame(dummy_data)
+
+        # To prepare features, the ContinuousAutoTrader uses its internal FeatureEngineer.
+        # The FeatureEngineer expects a list of dictionaries.
+        # We need to simulate how ContinuousAutoTrader's collect_and_store_data would populate training_data
+        # before prepare_features is called.
         
+        # Temporarily replace the training_data with enough samples for FeatureEngineer to be fitted
+        original_training_data = isolated_trader.training_data
+        isolated_trader.training_data = deque(dummy_df.to_dict('records'), maxlen=isolated_trader.max_training_samples)
+        
+        # Fit scalers so FeatureEngineer knows all feature names and is ready for transform
+        isolated_trader.fit_scalers()
+        
+        # Use the last data point from the dummy_df for feature preparation
+        data_point = isolated_trader.training_data[-1]
+
         features = isolated_trader.prepare_features(data_point)
+        
+        # Restore original training data
+        isolated_trader.training_data = original_training_data
         
         assert len(features) == isolated_trader.settings.ml.feature_count  # Expected number of features
         assert features[0] == 45000  # price
