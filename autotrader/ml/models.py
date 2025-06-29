@@ -31,7 +31,8 @@ class LSTMModel:
     def _create_model(self):
         """Create the LSTM model architecture."""
         self.model = tf.keras.Sequential([
-            tf.keras.layers.LSTM(50, return_sequences=True, input_shape=(self.sequence_length, self.num_features)),
+            tf.keras.Input(shape=(self.sequence_length, self.num_features)), # Use Input layer as first layer
+            tf.keras.layers.LSTM(50, return_sequences=True),
             tf.keras.layers.Dropout(0.2),
             tf.keras.layers.LSTM(50, return_sequences=True),
             tf.keras.layers.Dropout(0.2),

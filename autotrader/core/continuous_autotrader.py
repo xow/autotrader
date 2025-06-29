@@ -22,6 +22,7 @@ init(autoreset=True)
 
 # Import FeatureEngineer and FeatureConfig
 from autotrader.ml.feature_engineer import FeatureEngineer, FeatureConfig
+from autotrader.utils.display_manager import DisplayManager # NEW: Import DisplayManager
 
 # Constants
 DEFAULT_CONFIG = {
@@ -38,41 +39,67 @@ try:
     import talib
     TALIB_AVAILABLE = True
 except ImportError:
-    print("TA-Lib not available, using manual calculations")
+    # Changed to logger.warning for consistency and to avoid direct print
+    logging.warning("TA-Lib not available, using manual calculations")
     TALIB_AVAILABLE = False
 
 # Configure logging for overnight operation
+# Set logging level to INFO for file, but rely on DisplayManager for console output
 logging.basicConfig(
-    level=logging.DEBUG,  # Set to DEBUG to see all messages
+    level=logging.INFO,  # Set to INFO for file logging, DisplayManager handles console
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
         logging.FileHandler('autotrader.log')
     ]
 )
 
-# Get the logger instance after basicConfig
-# Custom processor for coloring log output
-def add_coloring_processor(_, __, event_dict):
-    level = event_dict.get("level")
-    if level:
-        if level == "info":
-            event_dict["event"] = f"{Fore.GREEN}{event_dict['event']}{Style.RESET_ALL}"
-        elif level == "warning":
-            event_dict["event"] = f"{Fore.YELLOW}{event_dict['event']}{Style.RESET_ALL}"
-        elif level == "error":
-            event_dict["event"] = f"{Fore.RED}{event_dict['event']}{Style.RESET_ALL}"
-        elif level == "debug":
-            event_dict["event"] = f"{Fore.MAGENTA}{event_dict['event']}{Style.RESET_ALL}"
-    return event_dict
+# Custom processor for routing logs to DisplayManager
+class DisplayManagerLogger:
+    """
+    A structlog processor that routes log messages to the DisplayManager.
+    The DisplayManager instance is set after the ContinuousAutoTrader is initialized.
+    """
+    _instance = None # Singleton pattern for easier global access
 
+    def __new__(cls, *args, **kwargs):
+        if not cls._instance:
+            cls._instance = super(DisplayManagerLogger, cls).__new__(cls)
+        return cls._instance
+
+    def __init__(self, display_manager_instance=None):
+        if display_manager_instance: # Only set if provided, avoids re-init on subsequent calls
+            self.display_manager = display_manager_instance
+        elif not hasattr(self, 'display_manager'): # Initialize if not already present
+            self.display_manager = None # Will be set later
+
+    def set_display_manager(self, display_manager_instance):
+        """Sets the DisplayManager instance for this logger."""
+        self.display_manager = display_manager_instance
+
+    def __call__(self, logger, method_name, event_dict):
+        # We handle info, warning, error, and exception messages via DisplayManager
+        # Debug messages will still go to the file if basicConfig is set to DEBUG
+        if self.display_manager: # Only log if display_manager is set
+            if method_name == "info":
+                self.display_manager.log_message(event_dict["event"], level="info")
+            elif method_name == "warning":
+                self.display_manager.log_message(event_dict["event"], level="warning")
+            elif method_name == "error":
+                self.display_manager.log_message(event_dict["event"], level="error")
+            elif method_name == "exception": # For logger.exception calls
+                self.display_manager.log_message(event_dict["event"], level="error")
+        return event_dict
+
+# Global structlog configuration
+# The DisplayManagerLogger instance will be created and its display_manager set later.
 structlog.configure(
     processors=[
         structlog.processors.TimeStamper(fmt="%Y-%m-%d %H:%M:%S", utc=False),
-        add_coloring_processor, # Add the coloring processor here
-        structlog.dev.ConsoleRenderer()
+        DisplayManagerLogger(), # Use the singleton instance
+        structlog.dev.ConsoleRenderer() # Re-add ConsoleRenderer for debugging structlog issues
     ],
     context_class=dict,
-    logger_factory=structlog.PrintLoggerFactory()
+    logger_factory=structlog.PrintLoggerFactory() # Revert to PrintLoggerFactory
 )
 logger = structlog.get_logger(__name__)
 
@@ -112,6 +139,12 @@ class ContinuousAutoTrader:
         self.limited_run = limited_run
         self.run_iterations = run_iterations
         
+        # Initialize DisplayManager here
+        self.display_manager = DisplayManager(total_iterations=run_iterations if limited_run else 0)
+        
+        # Set the DisplayManager instance for the global DisplayManagerLogger
+        DisplayManagerLogger().set_display_manager(self.display_manager)
+
         self.position_size = 0.0
         self.entry_price = 0.0
         self.last_save_time = time.time()
@@ -214,7 +247,7 @@ class ContinuousAutoTrader:
         full_features_df = temp_fe._generate_all_features(dummy_df)
         self.feature_engineer.feature_names_ = list(full_features_df.columns)
         self.feature_engineer.is_fitted_ = True # Mark as fitted for feature names
-        logger.info("FeatureEngineer feature names initialized with full set", count=len(self.feature_engineer.feature_names_))
+        logger.debug("FeatureEngineer feature names initialized with full set", count=len(self.feature_engineer.feature_names_)) # Changed to debug
 
         # Load scalers after feature_engineer is initialized
         self.feature_scaler = self.load_scalers() # This will also set self.scalers_fitted
@@ -232,8 +265,8 @@ class ContinuousAutoTrader:
         # if self.model is None:
         #     self.model = self.create_lstm_model()
         
-        # Log configuration details
-        logger.info("AutoTrader initialized",
+        # Log configuration details (changed to debug or removed if not essential)
+        logger.debug("AutoTrader initialized with settings:",
             initial_balance=self.balance,
             confidence_threshold=self.confidence_threshold,
             rsi_oversold=self.rsi_oversold,
@@ -251,85 +284,41 @@ class ContinuousAutoTrader:
             run_iterations=self.run_iterations
         )
         
-        # Log the number of training samples
-        logger.info("Loaded training samples", count=len(self.training_data))
+        logger.debug("Loaded training samples", count=len(self.training_data)) # Changed to debug
         
-        # Log the model summary
-        if self.model and not self._model_summary_logged: # Check if model is not None before calling summary
-            self.model.summary(print_fn=lambda x: logger.info(x)) # Use print_fn to log summary
+        if self.model and not self._model_summary_logged:
+            # Model summary should only be logged once and not to the console repeatedly
+            self.model.summary(print_fn=lambda x: logger.debug(x)) # Changed to debug
             self._model_summary_logged = True
         
-        # Log the feature engineer's scaler status
-        logger.info("Feature engineer scaler fitted status", is_fitted=self.feature_engineer.is_fitted_)
+        logger.debug("Feature engineer scaler fitted status", is_fitted=self.feature_engineer.is_fitted_) # Changed to debug
         
-        # Log the initial balance
-        logger.info("Initial balance", balance=self.balance)
-        
-        # Log the initial position size
-        logger.info("Initial position size", position_size=self.position_size)
-        
-        # Log the initial entry price
-        logger.info("Initial entry price", entry_price=self.entry_price)
-        
-        # Log the initial last save time
-        logger.info("Initial last save time", last_save_time=self.last_save_time)
-        
-        # Log the initial last training time
-        logger.info("Initial last training time", last_training_time=self.last_training_time)
-        
-        # Log the initial shutdown requested
-        logger.info("Initial shutdown requested", shutdown_requested=self._shutdown_requested)
-        
-        # Log the initial shutdown event
-        logger.info("Initial shutdown event", shutdown_event=self._shutdown_event)
-        
-        # Log the initial training data filename
-        logger.info("Initial training data filename", training_data_filename=self.training_data_filename)
-        
-        # Log the initial model filename
-        logger.info("Initial model filename", model_filename=self.model_filename)
-        
-        # Log the initial scaler filename
-        logger.info("Initial scaler filename", scaler_filename=self.scaler_filename)
-        
-        # Log the initial state filename
-        logger.info("Initial state filename", state_filename=self.state_filename)
-        
-        # Log the initial min data points
-        logger.info("Initial min data points", min_data_points=self.min_data_points)
-        
-        # Log the initial sequence length
-        logger.info("Initial sequence length", sequence_length=self.sequence_length)
-        
-        # Log the initial max training samples
-        logger.info("Initial max training samples", max_training_samples=self.max_training_samples)
-        
-        # Log the initial run iterations
-        logger.info("Initial run iterations", run_iterations=self.run_iterations)
-        
-        # Log the initial save interval seconds
-        logger.info("Initial save interval seconds", save_interval_seconds=self.save_interval_seconds)
-        
-        # Log the initial training interval seconds
-        logger.info("Initial training interval seconds", training_interval_seconds=self.training_interval_seconds)
-        
-        # Log the initial feature engineer
-        logger.info("Initial feature engineer", feature_engineer=self.feature_engineer)
-        
-        # Log the initial model
-        logger.info("Initial model", model=self.model)
-        
-        # Log the initial training data
-        logger.info("Initial training data", training_data=list(self.training_data)[:5])
-        
-        # Log the initial price history
-        logger.info("Initial price history", price_history=self._price_history)
-        
-        # Log the initial training data deque
-        logger.info("Initial training data deque", training_data_deque=self._training_data_deque)
-        
-        # Log the initial model summary logged
-        logger.info("Initial model summary logged", model_summary_logged=self._model_summary_logged)
+        # The following initial state logs are now redundant with the main display
+        # and can be removed or changed to debug if truly needed for deep debugging.
+        # Removing for cleaner output as per requirements.
+        # logger.info("Initial balance", balance=self.balance)
+        # logger.info("Initial position size", position_size=self.position_size)
+        # logger.info("Initial entry price", entry_price=self.entry_price)
+        # logger.info("Initial last save time", last_save_time=self.last_save_time)
+        # logger.info("Initial last training time", last_training_time=self.last_training_time)
+        # logger.info("Initial shutdown requested", shutdown_requested=self._shutdown_requested)
+        # logger.info("Initial shutdown event", shutdown_event=self._shutdown_event)
+        # logger.info("Initial training data filename", training_data_filename=self.training_data_filename)
+        # logger.info("Initial model filename", model_filename=self.model_filename)
+        # logger.info("Initial scaler filename", scaler_filename=self.scaler_filename)
+        # logger.info("Initial state filename", state_filename=self.state_filename)
+        # logger.info("Initial min data points", min_data_points=self.min_data_points)
+        # logger.info("Initial sequence length", sequence_length=self.sequence_length)
+        # logger.info("Initial max training samples", max_training_samples=self.max_training_samples)
+        # logger.info("Initial run iterations", run_iterations=self.run_iterations)
+        # logger.info("Initial save interval seconds", save_interval_seconds=self.save_interval_seconds)
+        # logger.info("Initial training interval seconds", training_interval_seconds=self.training_interval_seconds)
+        # logger.info("Initial feature engineer", feature_engineer=self.feature_engineer)
+        # logger.info("Initial model", model=self.model)
+        # logger.info("Initial training data", training_data=list(self.training_data)[:5])
+        # logger.info("Initial price history", price_history=self._price_history)
+        # logger.info("Initial training data deque", training_data_deque=self._training_data_deque)
+        # logger.info("Initial model summary logged", model_summary_logged=self._model_summary_logged)
         
     def _setup_signal_handlers(self):
         """Set up signal handlers for graceful shutdown, only if in the main thread."""
@@ -342,7 +331,7 @@ class ContinuousAutoTrader:
 
     def _signal_handler(self, signum, frame):
         """Handle signals for graceful shutdown."""
-        logger.info("Signal received, initiating graceful shutdown.", signum=signum)
+        self.display_manager.log_message(f"Signal received, initiating graceful shutdown (Signal: {signum}).", level="info")
         self._shutdown_requested = True
         self._shutdown_event.set()
 
@@ -350,7 +339,7 @@ class ContinuousAutoTrader:
         """Load configuration from environment variables or a config file."""
         # This method is no longer needed as configuration is handled by Settings
         # Keeping it as a placeholder if other parts of the code still call it
-        logger.warning("'_load_config' method is deprecated. Use 'Settings' for configuration.")
+        logger.debug("'_load_config' method is deprecated. Using 'Settings' for configuration.")
         return {}
 
     def save_state(self):
@@ -362,9 +351,10 @@ class ContinuousAutoTrader:
                     'position_size': self.position_size,
                     'entry_price': self.entry_price
                 }, f)
-            logger.info("Trader state saved successfully")
+            self.display_manager.log_message("Trader state saved successfully.", level="info")
         except Exception as e:
-            logger.error("Error saving trader state", exc_info=e)
+            self.display_manager.log_message(f"Error saving trader state: {e}", level="error")
+            logger.error("Error saving trader state", exc_info=e) # Log full traceback to file
 
     def load_state(self):
         """Load the trader state from a file."""
@@ -374,11 +364,12 @@ class ContinuousAutoTrader:
                 self.balance = state.get('balance', self.settings.initial_balance) # Use settings for default
                 self.position_size = state.get('position_size', 0.0)
                 self.entry_price = state.get('entry_price', 0.0)
-            logger.info("Trader state loaded successfully")
+            self.display_manager.log_message("Trader state loaded successfully.", level="info")
         except FileNotFoundError:
-            logger.info("No trader state file found, starting fresh")
+            self.display_manager.log_message("No trader state file found, starting fresh.", level="info")
         except Exception as e:
-            logger.error("Error loading trader state", exc_info=e)
+            self.display_manager.log_message(f"Error loading trader state: {e}", level="error")
+            logger.error("Error loading trader state", exc_info=e) # Log full traceback to file
 
     def save_scalers(self):
         """Save the scalers to a file."""
@@ -388,9 +379,10 @@ class ContinuousAutoTrader:
                     'feature_engineer_scaler': self.feature_engineer.scaler,
                     'feature_names': self.feature_engineer.feature_names_
                 }, f)
-            logger.info("Scalers saved successfully")
+            self.display_manager.log_message("Scalers saved successfully.", level="info")
         except Exception as e:
-            logger.error("Error saving scalers", exc_info=e)
+            self.display_manager.log_message(f"Error saving scalers: {e}", level="error")
+            logger.error("Error saving scalers", exc_info=e) # Log full traceback to file
 
     def load_scalers(self):
         """Load the scalers from a file."""
@@ -401,14 +393,15 @@ class ContinuousAutoTrader:
                 self.feature_engineer.feature_names_ = scalers['feature_names']
                 self.feature_engineer.is_fitted_ = True # Set to True on successful load
                 self.scalers_fitted = True # Also update ContinuousAutoTrader's status
-            logger.info("Scalers loaded successfully")
+            self.display_manager.log_message("Scalers loaded successfully.", level="info")
         except FileNotFoundError:
-            logger.info("No scalers file found, creating new scalers")
+            self.display_manager.log_message("No scalers file found, creating new scalers.", level="info")
             self.feature_engineer._init_scaler() # Initialize a new scaler
             self.feature_engineer.is_fitted_ = False # Not fitted yet
             self.scalers_fitted = False # Not fitted yet
         except Exception as e:
-            logger.error("Error loading scalers", exc_info=e)
+            self.display_manager.log_message(f"Error loading scalers: {e}", level="error")
+            logger.error("Error loading scalers", exc_info=e) # Log full traceback to file
             self.feature_engineer._init_scaler() # Initialize a new scaler on error
             self.feature_engineer.is_fitted_ = False # Not fitted yet
             self.scalers_fitted = False # Not fitted yet
@@ -427,6 +420,7 @@ class ContinuousAutoTrader:
             
             # Basic data validation
             if not isinstance(market_data, list):
+                self.display_manager.log_message("Invalid data format from BTCMarkets API.", level="error")
                 logger.error("Invalid data format from BTCMarkets API")
                 return []
             
@@ -445,9 +439,11 @@ class ContinuousAutoTrader:
                         # Convert datetime object to Unix timestamp in milliseconds
                         data_point['timestamp'] = int(dt_object.timestamp() * 1000)
                     except ValueError as ve:
+                        self.display_manager.log_message(f"Invalid timestamp format. Using current timestamp. Error: {ve}", level="warning")
                         logger.warning("Invalid timestamp format. Using current timestamp.", timestamp=timestamp_str, error=str(ve))
                         data_point['timestamp'] = int(time.time() * 1000) # Fallback to current timestamp
                 else:
+                    self.display_manager.log_message("Timestamp missing from API response. Adding current timestamp.", level="warning")
                     logger.warning("Timestamp missing from API response. Adding current timestamp.")
                     data_point['timestamp'] = int(time.time() * 1000) # Add current timestamp if not present
                 
@@ -456,18 +452,23 @@ class ContinuousAutoTrader:
             return processed_data
         
         except requests.exceptions.Timeout as e:
+            self.display_manager.log_message("Market data request timed out.", level="error")
             logger.error("Market data request timed out", exc_info=e)
             raise NetworkTimeoutError("Market data request timed out", original_exception=e) from e
         except requests.exceptions.ConnectionError as e:
+            self.display_manager.log_message("Failed to connect to the exchange.", level="error")
             logger.error("Failed to connect to the exchange", exc_info=e)
             raise NetworkError("Failed to connect to the exchange", original_exception=e) from e
         except requests.exceptions.HTTPError as e:
+            self.display_manager.log_message(f"HTTP error fetching market data: {e.response.status_code} - {e.response.text}", level="error")
             logger.error("HTTP error fetching market data", status_code=e.response.status_code, response_text=e.response.text, exc_info=e)
             raise APIError("HTTP error fetching market data", status_code=e.response.status_code, response_text=e.response.text) from e
         except json.JSONDecodeError as e:
+            self.display_manager.log_message(f"Failed to decode JSON response from API: {e}", level="error")
             logger.error("Failed to decode JSON response from API", exc_info=e, response_text=response.text if 'response' in locals() else 'N/A')
             raise DataError("Invalid JSON response from API", data_type="market_data", validation_errors={"json_decode_error": str(e)}) from e
         except Exception as e: # Catch all other exceptions
+            self.display_manager.log_message(f"An unexpected error occurred while fetching market data: {e}", level="error")
             logger.error("An unexpected error occurred while fetching market data", exc_info=e)
             return []
 
@@ -483,6 +484,7 @@ class ContinuousAutoTrader:
                                     or None if not found or invalid.
         """
         if not market_data:
+            self.display_manager.log_message("No market data provided for extraction.", level="warning")
             logger.warning("No market data provided for extraction.")
             return None
         
@@ -493,6 +495,7 @@ class ContinuousAutoTrader:
                 break
         
         if btc_aud_data is None:
+            self.display_manager.log_message("BTC-AUD market data not found in the API response.", level="warning")
             logger.warning("BTC-AUD market data not found in the API response.")
             return None
         
@@ -515,15 +518,18 @@ class ContinuousAutoTrader:
             
             # Basic validation for critical fields
             if extracted["price"] <= 0 or extracted["volume"] < 0:
+                self.display_manager.log_message(f"Invalid price or volume in extracted data: Price={extracted['price']}, Volume={extracted['volume']}", level="warning")
                 logger.warning("Invalid price or volume in extracted data", price=extracted['price'], volume=extracted['volume'])
                 return None
             
             return extracted
         
         except (ValueError, TypeError) as e:
+            self.display_manager.log_message(f"Error converting market data values: {e}", level="error")
             logger.error("Error converting market data values", exc_info=e, data=btc_aud_data)
             return None
         except Exception as e:
+            self.display_manager.log_message(f"An unexpected error occurred during data extraction: {e}", level="error")
             logger.error("An unexpected error occurred during data extraction", exc_info=e)
             return None
 
@@ -590,6 +596,7 @@ class ContinuousAutoTrader:
         elif market_data:
             # Ensure market_data is not None and is a list
             if not isinstance(market_data, list):
+                self.display_manager.log_message("Invalid market data format, cannot calculate indicators.", level="warning")
                 logger.warning("Invalid market data format, cannot calculate indicators")
                 return []
             
@@ -600,6 +607,7 @@ class ContinuousAutoTrader:
             if 'lastPrice' in df.columns:
                 df['price'] = df['lastPrice']
             elif 'price' not in df.columns:
+                self.display_manager.log_message("No 'lastPrice' or 'price' column found after standardization, cannot calculate indicators.", level="warning")
                 logger.warning("No 'lastPrice' or 'price' column found after standardization, cannot calculate indicators")
                 return market_data
             
@@ -609,6 +617,7 @@ class ContinuousAutoTrader:
                 if market_data and 'timestamp' in market_data[0]:
                     df['timestamp'] = [d.get('timestamp') for d in market_data]
                 else:
+                    self.display_manager.log_message("Timestamp column missing in market data. Adding current timestamp.", level="warning")
                     logger.warning("Timestamp column missing in market data. Adding current timestamp.")
                     df['timestamp'] = int(time.time() * 1000) # Add current Unix timestamp in milliseconds
             
@@ -621,6 +630,7 @@ class ContinuousAutoTrader:
             
             # Check for NaN values in critical columns after conversion
             if df['price'].isnull().any():
+                self.display_manager.log_message(f"Invalid price data detected after numeric conversion. Skipping indicator calculation.", level="warning")
                 logger.warning("Invalid price data detected after numeric conversion. Skipping indicator calculation.", invalid_prices=df[df['price'].isnull()]['price'].tolist())
                 return []
             
@@ -630,9 +640,11 @@ class ContinuousAutoTrader:
             
             # Ensure there are enough valid data points for basic calculations
             if len(df) < 1: # At least one data point is needed
+                self.display_manager.log_message(f"Not enough valid data points to calculate indicators. Needed: {1}, Got: {len(df)}", level="warning")
                 logger.warning("Not enough valid data points to calculate indicators. Returning original market data.", needed=1, got=len(df))
                 return market_data
         else:
+            self.display_manager.log_message("No market data or price/volume arrays provided for indicator calculation.", level="warning")
             logger.warning("No market data or price/volume arrays provided for indicator calculation.")
             return []
         
@@ -703,7 +715,8 @@ class ContinuousAutoTrader:
         try:
             # Define the LSTM model
             model = tf.keras.Sequential([
-                tf.keras.layers.LSTM(self.settings.lstm_units, return_sequences=True, input_shape=(self.settings.sequence_length, self.settings.feature_count)),
+                tf.keras.Input(shape=(self.settings.sequence_length, self.settings.feature_count)), # Use Input layer as first layer
+                tf.keras.layers.LSTM(self.settings.lstm_units, return_sequences=True),
                 tf.keras.layers.Dropout(self.settings.dropout_rate),
                 tf.keras.layers.LSTM(self.settings.lstm_units, return_sequences=False),
                 tf.keras.layers.Dropout(self.settings.dropout_rate),
@@ -715,11 +728,12 @@ class ContinuousAutoTrader:
             model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=self.settings.learning_rate), loss='mse', metrics=['mae'])
             
             # Log model summary
-            model.summary(print_fn=lambda x: logger.info(x)) # Use print_fn to log summary
+            model.summary(print_fn=lambda x: logger.debug(x)) # Use print_fn to log summary
             
             return model
         
         except Exception as e:
+            self.display_manager.log_message(f"Error creating LSTM model: {e}", level="error")
             logger.error("Error creating LSTM model", exc_info=e)
             return None
  
@@ -760,6 +774,7 @@ class ContinuousAutoTrader:
                 logger.debug("Prepared features using fitted FeatureEngineer and scaler", first_few_features=features[:5])
             else:
                 features = features_array[0].tolist()
+                self.display_manager.log_message("FeatureEngineer not fitted. Returning raw (unscaled) features.", level="warning")
                 logger.warning("FeatureEngineer not fitted. Returning raw (unscaled) features.", first_few_features=features[:5])
             
             logger.debug("Prepared features count", count=len(features))
@@ -768,6 +783,7 @@ class ContinuousAutoTrader:
             return features
         
         except Exception as e:
+            self.display_manager.log_message(f"Error preparing features with FeatureEngineer: {e}", level="error")
             logger.exception("Error preparing features with FeatureEngineer", exc_info=e)
             # Fallback to returning a zero vector of expected length on error
             # This length should ideally come from feature_engineer.get_feature_names()
@@ -786,6 +802,7 @@ class ContinuousAutoTrader:
             
             # Validate that price is not None
             if price is None:
+                self.display_manager.log_message("Missing price in market data for feature buffer update.", level="error")
                 logger.error("Missing price in market data", price=price)
                 raise DataError("Missing price in market data")
             
@@ -794,6 +811,7 @@ class ContinuousAutoTrader:
                 price = float(price)
                 volume = float(volume)
             except ValueError as ve:
+                self.display_manager.log_message(f"Invalid price or volume format for feature buffer update: {ve}", level="error")
                 logger.error("Invalid price or volume format", price=price, volume=volume, exc_info=ve)
                 raise DataError(f"Invalid price or volume format: {ve}") from ve
             
@@ -805,9 +823,11 @@ class ContinuousAutoTrader:
                 logger.debug("Updated feature buffer", price=price, volume=volume)
                 self._data_buffer.append(feature_vector)
             else:
+                self.display_manager.log_message("Attempted to append to _data_buffer, but it does not exist.", level="error")
                 logger.error("Attempted to append to _data_buffer, but it does not exist on self.")
                 raise RuntimeError("'_data_buffer' attribute is missing from ContinuousAutoTrader instance.")
         except Exception as e:
+            self.display_manager.log_message(f"Error updating feature buffer: {e}", level="error")
             logger.error("Error updating feature buffer", exc_info=e)
 
     def fit_scalers(self) -> bool:
@@ -815,11 +835,13 @@ class ContinuousAutoTrader:
         try:
             # Ensure training_data is a deque
             if not isinstance(self.training_data, deque):
+                self.display_manager.log_message("Training data is not a deque, cannot fit scalers.", level="error")
                 logger.error("training_data is not a deque, cannot fit scalers.")
                 self.feature_engineer.is_fitted_ = False
                 return False
             
             if len(self.training_data) < self.settings.ml.sequence_length:
+                self.display_manager.log_message(f"Insufficient training data for scaler fitting. Needed: {self.settings.ml.sequence_length}, Got: {len(self.training_data)}.", level="warning")
                 logger.warning("Insufficient training data for scaler fitting.", needed=self.settings.ml.sequence_length, got=len(self.training_data))
                 self.feature_engineer.is_fitted_ = False
                 return False
@@ -828,11 +850,13 @@ class ContinuousAutoTrader:
             # The FeatureEngineer handles its own internal scaler fitting
             self.feature_engineer.fit(list(self.training_data))
             
+            self.display_manager.log_message("FeatureEngineer fitted successfully.", level="info")
             logger.info("FeatureEngineer fitted successfully")
             self.scalers_fitted = True # Set to True after successful fitting
             return True
             
         except Exception as e:
+            self.display_manager.log_message(f"Error fitting FeatureEngineer: {e}", level="error")
             logger.error("Error fitting FeatureEngineer", exc_info=e)
             self.feature_engineer.is_fitted_ = False
             self.scalers_fitted = False # Set to False on error
@@ -843,6 +867,7 @@ class ContinuousAutoTrader:
         try:
             # Ensure we have enough data
             if len(self.training_data) < self.sequence_length:
+                self.display_manager.log_message(f"Not enough data for training. Needed: {self.sequence_length}, Got: {len(self.training_data)}.", level="warning")
                 logger.warning("Not enough data for training.", needed=self.sequence_length, got=len(self.training_data))
                 # Return empty arrays with correct dimensions
                 return np.empty((0, self.sequence_length, self.settings.ml.feature_count)), np.empty((0,))
@@ -850,7 +875,9 @@ class ContinuousAutoTrader:
             # Transform all training data using the fitted FeatureEngineer
             # This will return scaled features
             if not self.feature_engineer.is_fitted_:
+                self.display_manager.log_message("FeatureEngineer not fitted, cannot prepare LSTM training data.", level="warning")
                 logger.warning("FeatureEngineer not fitted, cannot prepare LSTM training data.")
+                # Return empty arrays with correct dimensions if not fitted
                 return np.empty((0, self.sequence_length, self.settings.ml.feature_count)), np.empty((0,))
             
             # Get all scaled features from the training data
@@ -882,6 +909,7 @@ class ContinuousAutoTrader:
             return features, labels
         
         except Exception as e:
+            self.display_manager.log_message(f"Error preparing LSTM training data: {e}", level="error")
             logger.error("Error preparing LSTM training data", exc_info=e)
             return np.array([]), np.array([])
 
@@ -893,6 +921,7 @@ class ContinuousAutoTrader:
             
             # Ensure we have enough data
             if len(X) == 0 or len(y) == 0:
+                self.display_manager.log_message("No training data available, skipping training.", level="warning")
                 logger.warning("No training data available, skipping training")
                 return False
             
@@ -903,20 +932,23 @@ class ContinuousAutoTrader:
             history = self.model.fit(X, y, epochs=self.settings.training_epochs, batch_size=self.settings.batch_size, verbose=0) # Use settings for epochs and batch_size
             
             # Log the training
-            logger.info(f"{Fore.GREEN}LSTM model trained successfully.{Style.RESET_ALL}")
+            self.display_manager.log_message("LSTM model trained successfully.", level="info")
+            logger.info("LSTM model trained successfully.")
             self._log_model_performance(history) # Log model performance
             
             return True
         
         except Exception as e:
-            logger.error(f"{Fore.RED}Error training LSTM model: {e}{Style.RESET_ALL}", exc_info=e)
+            self.display_manager.log_message(f"Error training LSTM model: {e}", level="error")
+            logger.error("Error training LSTM model", exc_info=e)
             return False
 
     def _log_model_performance(self, history):
         """Log model performance metrics."""
         try:
             if history is None or not hasattr(history, 'history'):
-                logger.warning(f"{Fore.YELLOW}No training history available, cannot log performance.{Style.RESET_ALL}")
+                self.display_manager.log_message("No training history available, cannot log performance.", level="warning")
+                logger.warning("No training history available, cannot log performance.")
                 return
             
             # Extract the loss and mean absolute error from the history
@@ -924,10 +956,12 @@ class ContinuousAutoTrader:
             mae = history.history.get('mae')
             
             # Log the loss and mean absolute error
-            logger.info(f"{Fore.CYAN}Training performance: Loss={loss[-1]:.4f}, MAE={mae[-1]:.4f}{Style.RESET_ALL}")
+            self.display_manager.log_message(f"Training performance: Loss={loss[-1]:.4f}, MAE={mae[-1]:.4f}", level="info")
+            logger.info(f"Training performance: Loss={loss[-1]:.4f}, MAE={mae[-1]:.4f}")
             
         except Exception as e:
-            logger.error(f"{Fore.RED}Error logging model performance: {e}{Style.RESET_ALL}", exc_info=e)
+            self.display_manager.log_message(f"Error logging model performance: {e}", level="error")
+            logger.error("Error logging model performance", exc_info=e)
 
     def calculate_position_pnl(self, current_price: float) -> Tuple[float, float]:
         """Calculate profit and loss for the current position."""
@@ -950,6 +984,7 @@ class ContinuousAutoTrader:
             
             # Ensure market data is not None and is a list
             if not market_data or not isinstance(market_data, list):
+                self.display_manager.log_message("Invalid market data format, cannot collect and store data.", level="warning")
                 logger.warning("Invalid market data format, cannot collect and store data")
                 return False
             
@@ -958,6 +993,7 @@ class ContinuousAutoTrader:
             
             # Ensure market data is not None and is a list
             if not market_data or not isinstance(market_data, list):
+                self.display_manager.log_message("Invalid market data format after indicator calculation, cannot collect and store data.", level="warning")
                 logger.warning("Invalid market data format, cannot collect and store data")
                 return False
             
@@ -973,6 +1009,7 @@ class ContinuousAutoTrader:
             return True
         
         except Exception as e:
+            self.display_manager.log_message(f"Error collecting and storing data: {e}", level="error")
             logger.error("Error collecting and storing data", error=str(e), exc_info=e)
             return False
 
@@ -983,28 +1020,33 @@ class ContinuousAutoTrader:
             if os.path.exists(self.training_data_filename) and os.path.getsize(self.training_data_filename) > 0:
                 with open(self.training_data_filename, "r") as f:
                     data = json.load(f)
-                logger.info(f"{Fore.GREEN}Training data loaded: {len(data)} samples.{Style.RESET_ALL}")
+                self.display_manager.log_message(f"Training data loaded: {len(data)} samples.", level="info")
+                logger.info(f"Training data loaded: {len(data)} samples.")
                 return deque(data, maxlen=self.max_training_samples) # Return as deque
             else:
-                logger.info(f"{Fore.YELLOW}Training data file not found or is empty, starting fresh.{Style.RESET_ALL}")
+                self.display_manager.log_message("Training data file not found or is empty, starting fresh.", level="info")
+                logger.info("Training data file not found or is empty, starting fresh.")
                 # Ensure the file exists and contains an empty JSON array if it was empty
                 with open(self.training_data_filename, "w") as f:
                     json.dump([], f)
                 return deque(maxlen=self.max_training_samples) # Return empty deque
         except json.JSONDecodeError as e:
-            logger.error(f"{Fore.RED}Error decoding training data JSON, file might be corrupted. Starting fresh. Error: {e}{Style.RESET_ALL}", exc_info=e)
+            self.display_manager.log_message(f"Error decoding training data JSON, file might be corrupted. Starting fresh. Error: {e}", level="error")
+            logger.error(f"Error decoding training data JSON, file might be corrupted. Starting fresh. Error: {e}", exc_info=e)
             # Overwrite corrupted file with empty JSON array
             with open(self.training_data_filename, "w") as f:
                 json.dump([], f)
             return deque(maxlen=self.max_training_samples) # Return empty deque on error
         except FileNotFoundError:
-            logger.info(f"{Fore.YELLOW}No training data file found, creating new one and starting fresh.{Style.RESET_ALL}")
+            self.display_manager.log_message("No training data file found, creating new one and starting fresh.", level="info")
+            logger.info("No training data file found, creating new one and starting fresh.")
             # Create the file with an empty JSON array
             with open(self.training_data_filename, "w") as f:
                 json.dump([], f)
             return deque(maxlen=self.max_training_samples) # Return empty deque
         except Exception as e:
-            logger.error(f"{Fore.RED}Error loading training data: {e}{Style.RESET_ALL}", exc_info=e)
+            self.display_manager.log_message(f"Error loading training data: {e}", level="error")
+            logger.error(f"Error loading training data: {e}", exc_info=e)
             return deque(maxlen=self.max_training_samples) # Return empty deque on error
 
     def save_training_data(self):
@@ -1012,9 +1054,11 @@ class ContinuousAutoTrader:
         try:
             with open(self.training_data_filename, "w") as f:
                 json.dump(list(self.training_data), f, indent=2) # Convert deque to list
-            logger.info(f"{Fore.GREEN}Training data saved: {len(self.training_data)} samples.{Style.RESET_ALL}")
+            self.display_manager.log_message(f"Training data saved: {len(self.training_data)} samples.", level="info")
+            logger.info(f"Training data saved: {len(self.training_data)} samples.")
         except Exception as e:
-            logger.error(f"{Fore.RED}Error saving training data: {e}{Style.RESET_ALL}", exc_info=e)
+            self.display_manager.log_message(f"Error saving training data: {e}", level="error")
+            logger.error(f"Error saving training data: {e}", exc_info=e)
 
     def load_model(self):
         """Load the TensorFlow model or create a new one with correct input shape."""
@@ -1025,18 +1069,22 @@ class ContinuousAutoTrader:
             # Check if the loaded model has the correct input shape
             expected_input_shape = (None, self.sequence_length, self.settings.ml.feature_count) # Use settings for feature_count
             if model.input_shape[1:] != expected_input_shape[1:]:
-                logger.warning(f"{Fore.YELLOW}Model input shape mismatch. Creating new model. Expected: {expected_input_shape}, Actual: {model.input_shape}.{Style.RESET_ALL}")
+                self.display_manager.log_message(f"Model input shape mismatch. Creating new model. Expected: {expected_input_shape}, Actual: {model.input_shape}.", level="warning")
+                logger.warning(f"Model input shape mismatch. Creating new model. Expected: {expected_input_shape}, Actual: {model.input_shape}.")
                 model = self.create_lstm_model()
             else:
-                logger.info(f"{Fore.GREEN}LSTM model loaded successfully with input shape: {model.input_shape}.{Style.RESET_ALL}")
+                self.display_manager.log_message(f"LSTM model loaded successfully with input shape: {model.input_shape}.", level="info")
+                logger.info(f"LSTM model loaded successfully with input shape: {model.input_shape}.")
             
             return model
             
         except (FileNotFoundError, OSError) as e:
-            logger.info(f"{Fore.YELLOW}No valid model file found, will create new LSTM. Error: {e}{Style.RESET_ALL}", exc_info=e)
+            self.display_manager.log_message(f"No valid model file found, will create new LSTM. Error: {e}", level="info")
+            logger.info(f"No valid model file found, will create new LSTM. Error: {e}", exc_info=e)
             return self.create_lstm_model() # Ensure a new model is created and returned
         except Exception as e:
-            logger.error(f"{Fore.RED}Error loading model. Creating new model. Error: {e}{Style.RESET_ALL}", exc_info=e)
+            self.display_manager.log_message(f"Error loading model. Creating new model. Error: {e}", level="error")
+            logger.error(f"Error loading model. Creating new model. Error: {e}", exc_info=e)
             return self.create_lstm_model() # Ensure a new model is created and returned
 
     def save_model(self):
@@ -1044,11 +1092,14 @@ class ContinuousAutoTrader:
         try:
             if self.model:
                 self.model.save(self.model_filename)
-                logger.info(f"{Fore.GREEN}Model saved successfully to: {self.model_filename}.{Style.RESET_ALL}")
+                self.display_manager.log_message(f"Model saved successfully to: {self.model_filename}.", level="info")
+                logger.info(f"Model saved successfully to: {self.model_filename}.")
             else:
-                logger.warning(f"{Fore.YELLOW}No model to save.{Style.RESET_ALL}")
+                self.display_manager.log_message("No model to save.", level="warning")
+                logger.warning("No model to save.")
         except Exception as e:
-            logger.error(f"{Fore.RED}Error saving model: {e}{Style.RESET_ALL}", exc_info=e)
+            self.display_manager.log_message(f"Error saving model: {e}", level="error")
+            logger.error(f"Error saving model: {e}", exc_info=e)
 
     def predict_trade_signal(self, latest_data: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -1076,11 +1127,13 @@ class ContinuousAutoTrader:
                             current_market_price = 0.0 # Keep 0.0 if conversion fails
  
             if not self.model or not self.feature_engineer.is_fitted_: # Check feature_engineer.is_fitted_
+                self.display_manager.log_message("Model or feature engineer not available for prediction, returning HOLD signal.", level="warning")
                 logger.warning("Model or feature engineer not available for prediction, returning HOLD signal.")
                 return {"signal": "HOLD", "confidence": 0.5, "price": current_market_price, "rsi": latest_data.get('rsi', 50.0) if isinstance(latest_data, dict) else 50.0}
             
             # Ensure latest_data is a dictionary before proceeding
             if not isinstance(latest_data, dict):
+                self.display_manager.log_message(f"Invalid latest_data format for prediction. Expected dict, returning HOLD signal. Data type: {type(latest_data)}", level="warning")
                 logger.warning("Invalid latest_data format for prediction. Expected dict, returning HOLD signal.", data_type=type(latest_data))
                 return {"signal": "HOLD", "confidence": 0.5, "price": current_market_price, "rsi": 50.0}
  
@@ -1090,6 +1143,7 @@ class ContinuousAutoTrader:
             
             # Ensure features are not empty
             if features_array.size == 0:
+                self.display_manager.log_message("No features prepared for prediction, returning HOLD signal.", level="warning")
                 logger.warning("No features prepared for prediction, returning HOLD signal.")
                 return {"signal": "HOLD", "confidence": 0.5, "price": current_market_price, "rsi": latest_data.get('rsi', 50.0)}
             
@@ -1104,7 +1158,7 @@ class ContinuousAutoTrader:
             padded_features = np.zeros((1, self.sequence_length, features_array.shape[1])) # Use actual feature count
             padded_features[0, -1, :] = features_array[0, :] # Place the latest features at the end of the sequence
             
-            prediction = self.model.predict(padded_features)[0][0]
+            prediction = self.model.predict(padded_features, verbose=0)[0][0] # Add verbose=0 to suppress Keras output
             
             # Determine signal based on prediction and confidence threshold
             signal = "HOLD"
@@ -1134,6 +1188,7 @@ class ContinuousAutoTrader:
         
         except Exception as e:
             # print(f"DEBUG: Exception in predict_trade_signal: {e}", flush=True) # Removed debug print
+            self.display_manager.log_message(f"Error predicting trade signal: {e}", level="error")
             logger.error("Error predicting trade signal", exc_info=e)
             # Ensure current_market_price is defined even in exception
             current_market_price = 0.0
@@ -1158,6 +1213,7 @@ class ContinuousAutoTrader:
                                            confidence, price, and RSI.
         """
         if trade_signal is None:
+            self.display_manager.log_message("Trade signal is None, skipping trade execution.", level="warning")
             logger.warning("Trade signal is None, skipping trade execution.")
             return
 
@@ -1167,6 +1223,7 @@ class ContinuousAutoTrader:
         rsi = trade_signal.get("rsi")
         
         if not current_price:
+            self.display_manager.log_message("Current price not available for trade execution.", level="warning")
             logger.warning("Current price not available for trade execution.")
             return
         
@@ -1175,9 +1232,11 @@ class ContinuousAutoTrader:
         # Apply RSI override
         if rsi is not None:
             if rsi > self.settings.rsi_overbought and signal_type == "BUY":
+                self.display_manager.log_message(f"RSI is overbought ({rsi:.2f}), overriding BUY signal to HOLD.", level="info")
                 logger.info("RSI is overbought, overriding BUY signal to HOLD.", rsi=f"{rsi:.2f}")
                 signal_type = "HOLD"
             elif rsi < self.settings.rsi_oversold and signal_type == "SELL":
+                self.display_manager.log_message(f"RSI is oversold ({rsi:.2f}), overriding SELL signal to HOLD.", level="info")
                 logger.info("RSI is oversold, overriding SELL signal to HOLD.", rsi=f"{rsi:.2f}")
                 signal_type = "HOLD"
         
@@ -1189,8 +1248,10 @@ class ContinuousAutoTrader:
                 self.position_size += self.trade_amount
                 self.entry_price = current_price # For simplicity, assuming average entry price
                 trade_executed = True
+                self.display_manager.log_message(f"BUY executed: Amount: {self.trade_amount:.4f}, Price: ${current_price:,.2f}, New Balance: ${self.balance:,.2f}, Position: {self.position_size:.4f} BTC", level="info")
                 logger.info("BUY executed", amount=self.trade_amount, price=current_price, new_balance=self.balance, position=self.position_size)
             else:
+                self.display_manager.log_message(f"Insufficient balance to BUY. Needed: ${cost:.2f} AUD, Have: ${self.balance:,.2f} AUD", level="warning")
                 logger.warning("Insufficient balance to BUY.", needed=f"{cost:.2f} AUD", have=f"{self.balance:.2f} AUD")
         
         elif signal_type == "SELL" and confidence <= self.settings.sell_confidence_threshold:
@@ -1203,15 +1264,19 @@ class ContinuousAutoTrader:
                     self.position_size = 0.0
                     self.entry_price = 0.0
                 trade_executed = True
+                self.display_manager.log_message(f"SELL executed: Amount: {self.trade_amount:.4f}, Price: ${current_price:,.2f}, New Balance: ${self.balance:,.2f}, Position: {self.position_size:.4f} BTC", level="info")
                 logger.info("SELL executed", amount=self.trade_amount, price=current_price, new_balance=self.balance, position=self.position_size)
             else:
+                self.display_manager.log_message(f"Insufficient position to SELL. Have: {self.position_size:.4f} BTC, Needed: {self.trade_amount:.4f} BTC", level="warning")
                 logger.warning("Insufficient position to SELL.", have=f"{self.position_size:.4f} BTC", needed=f"{self.trade_amount:.4f} BTC")
         
         else:
+            self.display_manager.log_message(f"HOLD signal. No trade executed. Confidence: {confidence:.2f}, RSI: {rsi:.2f}", level="info")
             logger.info("HOLD signal. No trade executed.", confidence=confidence, rsi=rsi)
         
         if trade_executed:
             pnl, pnl_pct = self.calculate_position_pnl(current_price)
+            self.display_manager.log_message(f"Current PnL: ${pnl:,.2f} ({pnl_pct:.2f}%)", level="info")
             logger.info("Current PnL", pnl=pnl, pnl_pct=pnl_pct)
 
     def should_save(self) -> bool:
@@ -1224,19 +1289,18 @@ class ContinuousAutoTrader:
  
     def run(self):
         """Main loop for the trading bot."""
-        logger.info("AutoTrader bot stopped.")
+        self.display_manager.print_initialization_message() # Using DisplayManager for init message
         iteration_count = 0
         
-        while not self._shutdown_requested and (not self.limited_run or iteration_count <= self.run_iterations):
+        while not self._shutdown_requested and (not self.limited_run or iteration_count < self.run_iterations): # Changed <= to < for run_iterations
             try:
                 iteration_count += 1
                 
                 # 1. Collect and store data
                 if not self.collect_and_store_data():
-                    logger.warning("Failed to collect and store data. Skipping iteration.")
+                    self.display_manager.log_message("Failed to collect and store data. Skipping iteration.", level="warning")
                     time.sleep(self.settings.data_collection_interval)
-                    print(f"\rIteration {iteration_count}: Data collection failed. Balance: {self.balance:.2f} AUD, Position: {self.position_size:.4f} BTC{' ' * 20}", end="", flush=True) # Clear line
-                    continue
+                    continue # Continue to next iteration instead of printing status
                 
                 # 2. Fit scalers if needed
                 if not self.scalers_fitted and len(self.training_data) >= self.settings.ml.sequence_length:
@@ -1244,19 +1308,21 @@ class ContinuousAutoTrader:
                 
                 # 3. Train model if needed
                 if self.should_train():
+                    self.display_manager.print_training_start() # Using DisplayManager
                     if self.train_model():
                         self.last_training_time = time.time()
                         self.save_model()
                         self.save_scalers()
+                        # Training complete message is already handled by _log_model_performance
                     else:
-                        logger.warning("Model training failed or skipped due to insufficient data.")
+                        self.display_manager.log_message("Model training failed or skipped due to insufficient data.", level="warning")
+                        logger.warning("Model training failed or skipped due to insufficient data.") # Log to file
                 
                 # 4. Get latest data point for prediction
                 if not self.training_data:
-                    logger.warning("No training data available for prediction. Skipping trade signal generation.")
+                    self.display_manager.log_message("No training data available for prediction. Skipping trade signal generation.", level="warning")
                     time.sleep(self.settings.data_collection_interval)
-                    print(f"\rIteration {iteration_count}: No training data. Balance: {self.balance:.2f} AUD, Position: {self.position_size:.4f} BTC{' ' * 20}", end="", flush=True) # Clear line
-                    continue
+                    continue # Continue to next iteration instead of printing status
                 
                 latest_data = self.training_data[-1]
                 
@@ -1272,31 +1338,38 @@ class ContinuousAutoTrader:
                     self.save_training_data()
                     self.last_save_time = time.time()
                 
-                # Update and print status on a single line
+                # Update and print status using DisplayManager
                 signal_type = trade_signal.get("signal", "N/A")
                 confidence = trade_signal.get("confidence", 0.0)
                 current_price = trade_signal.get("price", 0.0)
                 rsi = latest_data.get('rsi', 50.0)
-
-                status_message = (
-                    f"\rIteration {iteration_count}: "
-                    f"Price: {current_price:.2f} AUD | "
-                    f"Signal: {signal_type} ({confidence:.2f}) | "
-                    f"RSI: {rsi:.2f} | "
-                    f"Balance: {self.balance:.2f} AUD | "
-                    f"Position: {self.position_size:.4f} BTC"
+                
+                # Get training samples count for progress bar
+                training_samples_count = len(self.training_data)
+                # Assuming total_training_samples is the maxlen of training_data deque
+                total_training_samples_for_display = self.max_training_samples
+                
+                self.display_manager.display_status(
+                    iteration=iteration_count,
+                    status="ACTIVE", # Assuming bot is active during run loop
+                    price=current_price,
+                    signal_type=signal_type,
+                    confidence=confidence,
+                    balance=self.balance,
+                    position_size=self.position_size,
+                    rsi=rsi,
+                    training_samples=training_samples_count,
+                    total_training_samples=total_training_samples_for_display
                 )
-                print(status_message, end="", flush=True)
                 
                 time.sleep(self.settings.data_collection_interval)
                 
             except Exception as e:
-                logger.exception("An unexpected error occurred during main loop", error=str(e))
-                print(f"\rIteration {iteration_count}: Error occurred. See logs. Balance: {self.balance:.2f} AUD, Position: {self.position_size:.4f} BTC{' ' * 20}", end="", flush=True) # Clear line
+                self.display_manager.log_message(f"An unexpected error occurred during main loop: {e}", level="error")
+                logger.exception("An unexpected error occurred during main loop", error=str(e)) # Log full traceback to file
                 time.sleep(self.settings.data_collection_interval)
         
-        print("\n", end="", flush=True) # Ensure the last line is cleared before final messages
-        logger.info("AutoTrader bot stopped.")
+        self.display_manager.print_shutdown_message() # Using DisplayManager for shutdown message
         self.save_state()
         self.save_training_data()
         self.save_model()
